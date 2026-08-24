@@ -36,6 +36,9 @@ gepflegte Playlist** aktualisieren. Keine neue Playlist pro Suche.
   „ungesehen“ setzen, um ihn von vorn zu schauen (zweistufige Rückfrage).
 - **Cover-Bilder** – jede Playlist (Zeitreise wie Almanach) bekommt auf Wunsch
   ein eigenes Poster in Plex.
+- **Sammlungen an andere Profile weitergeben** – ein Almanach lässt sich in
+  weitere Home-User übernehmen; dort wird er gegen deren eigenen Watch-Status
+  gebaut.
 - **Logbuch** – jeder Lauf mit Art, Zeitraum, Auslöser und Trefferzahl.
 
 ## Multi-User und Watched-Status
@@ -181,6 +184,24 @@ Playlist erscheint.
   gesetzt.
 - „Cover entfernen“ löscht die Datei und auch das Poster in Plex.
 
+### Sammlungen an andere Profile weitergeben
+
+Im Abschnitt **Für andere Profile** einer Sammlung lassen sich beliebige weitere
+Home-User ankreuzen und die Sammlung dorthin übernehmen. Jedes Zielprofil
+bekommt seine **eigene** Sammlung samt eigener Playlist – gebaut aus dem
+Watch-Status dieses Profils. Aus derselben Star-Wars-Sammlung wird so bei einer
+Person eine Playlist mit fünf, bei einer anderen mit sechs Titeln, je nachdem,
+wer was schon gesehen hat.
+
+- Die Playlists werden gleich mitgebaut; das Ergebnis nennt je Profil die Zahl
+  der ungesehenen Titel.
+- Ein vorhandenes Cover wird mit übernommen.
+- Führt ein Profil bereits eine Sammlung dieses Namens, wird sie **ergänzt**
+  statt verdoppelt. Ein erneutes Übernehmen gleicht also nur die fehlenden Titel
+  nach – eigene Ergänzungen des anderen Profils bleiben dabei erhalten.
+- Danach sind die Sammlungen unabhängig: spätere Änderungen wandern nicht von
+  selbst mit. Wer sie angleichen will, drückt den Knopf einfach erneut.
+
 ### Watch-Status zurücksetzen
 
 Am Ende jedes Almanachs steht die **Gefahrenzone** mit „Watch-Status
@@ -226,7 +247,7 @@ Wochenschritte übernehmen diesen Zuschnitt dann unverändert.
 ```
 app/
 ├── main.py          FastAPI: Seiten, htmx-Fragmente, Webhook, Thumb-Proxy
-├── almanach.py      Titelsuche, Sammlungen, Release-Order-Playlist, Reset
+├── almanach.py      Titelsuche, Sammlungen, Release-Order-Playlist, Reset, Kopie
 ├── config.py        Settings aus Env-Variablen
 ├── covers.py        Cover-Bilder prüfen, ablegen, wiederfinden
 ├── formatting.py    Deutsche Datumsformate, Wochentage, Wochenrechnung
@@ -265,6 +286,7 @@ ein Webhook-Event.
 | `GET` | `/almanach/{id}/search`, `/almanach/{id}/preview` | Trefferliste, Vorschau in Release-Order |
 | `POST` | `/almanach/{id}/add`, `/almanach/{id}/remove` | Bestand pflegen |
 | `POST` | `/almanach/{id}/sync` | Playlist der Sammlung schreiben |
+| `POST` | `/almanach/{id}/share` | Sammlung in andere Profile übernehmen |
 | `POST` | `/almanach/{id}/cover`, `/almanach/{id}/cover/delete` | Cover setzen bzw. entfernen |
 | `GET` | `/almanach/{id}/cover/image` | Cover ausliefern (für die Vorschau) |
 | `POST` | `/cover/timemachine`, `/cover/timemachine/delete` | Cover der Zeitreise-Playlist |
@@ -289,7 +311,8 @@ pytest -q
 Die Suite deckt Suche, Sortierung, Blacklist-Logik, Playlist-Pflege (inkl.
 Leeren, Nachfüllen in Blöcken und dem Fall, dass Plex eine leer geräumte
 Playlist selbst entfernt), Wochenrechnung und Wochentagsanzeige, den Almanach
-(Titelsuche, Serien-Auflösung, Release-Order, fehlende Einträge), Cover-Prüfung
+(Titelsuche, Serien-Auflösung, Release-Order, fehlende Einträge), das Übernehmen
+in andere Profile inklusive getrennter Watch-Stände, Cover-Prüfung
 und -Übertragung sowie
 Scheduler-Entprellung und alle HTTP-Endpunkte gegen ein Plex-Double ab –
 ein echter Plex-Server wird dafür nicht gebraucht.
@@ -309,6 +332,7 @@ Authentifizierung davorsetzen und `PTM_WEBHOOK_TOKEN` setzen.
 
 - Friends-Accounts (eigener Plex-Login) statt nur Home-User
 - Blacklist auf Episoden-Ebene statt nur ganze Serien/Filme
-- Almanach: Sammlungen zwischen Nutzern teilen oder kopieren
+- Almanach: Sammlungen wirklich gemeinsam führen statt kopieren (Änderungen
+  würden dann automatisch in allen Profilen ankommen)
 - Historie zuletzt genutzter Zeiträume als Schnellauswahl
   (aktuell wird nur der jeweils letzte Zeitraum gemerkt)

@@ -1,0 +1,55 @@
+{# Sammlung in andere Profile übernehmen. Die Kopie gehört dem Zielprofil und
+   wird gegen dessen eigenen Watch-Status gebaut. #}
+{% if share_message %}
+  <div class="notice muted">{{ share_message }}</div>
+{% endif %}
+
+{% for result in share_results or [] %}
+  {% if not result.ok %}
+    <div class="notice error"><strong>{{ result.user_id }}:</strong> {{ result.error }}</div>
+  {% else %}
+    <div class="notice ok">
+      <strong>{{ result.user_id }}:</strong>
+      {%- if result.created %} Sammlung angelegt mit {{ result.total }} Einträgen.
+      {%- elif result.added %} {{ result.added }} Eintrag/Einträge ergänzt (jetzt {{ result.total }}).
+      {%- else %} war bereits vollständig ({{ result.total }} Einträge).{% endif %}
+      {%- if result.sync %}
+        {% if result.sync.ok %} {{ result.sync.message }}
+        {% else %} <span class="cell-sub">Playlist nicht gebaut: {{ result.sync.error }}</span>
+        {% endif %}
+      {% endif %}
+    </div>
+  {% endif %}
+{% endfor %}
+
+{% if not share_targets %}
+  <div class="empty">Keine weiteren Profile auf diesem Server.</div>
+{% else %}
+<form hx-post="/almanach/{{ almanach.id }}/share"
+      hx-target="#share-zone"
+      hx-swap="innerHTML"
+      hx-indicator="#share-flux"
+      hx-disabled-elt="find button">
+  <div class="profile-list">
+    {% for target in share_targets %}
+      <label class="profile-option">
+        <input type="checkbox" name="profiles" value="{{ target.user.id }}">
+        <span class="profile-name">{{ target.user.label }}</span>
+        <span class="cell-sub">
+          {%- if target.exists %}hat die Sammlung bereits ({{ target.count }} Einträge)
+          {%- else %}noch nicht vorhanden{% endif %}
+        </span>
+      </label>
+    {% endfor %}
+  </div>
+
+  <button class="btn-week primary" type="submit">In gewählte Profile übernehmen</button>
+</form>
+
+<p class="cell-sub" style="margin-bottom:0">
+  Jedes Profil bekommt eine eigene Sammlung samt eigener Playlist, gebaut aus
+  seinem eigenen Watch-Status. Spätere Änderungen hier wandern nicht von selbst
+  mit – dafür einfach erneut übernehmen, dann werden nur die fehlenden Titel
+  ergänzt.
+</p>
+{% endif %}

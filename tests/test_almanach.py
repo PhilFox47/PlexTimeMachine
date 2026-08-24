@@ -10,6 +10,8 @@ from app import db
 from app.almanach import (
     build_preview,
     collect_almanach_items,
+    copy_almanach,
+    copy_almanach_to_users,
     plan_reset,
     reset_watch_state,
     search_titles,
@@ -430,3 +432,148 @@ def test_reset_makes_items_return_to_the_playlist(session, gateway, plex_data, a
     reset_watch_state(session, almanach, gateway=gateway)
 
     assert sync_almanach(session, almanach, gateway=gateway).item_count == 2
+
+
+# ---------------------------------------------------------------------------
+# In andere Profile übernehmen
+# ---------------------------------------------------------------------------
+
+
+def _nina_gateway(plex_data, watched_episode: bool = False):
+    """Zweiter Server-Doppelgänger mit eigenem Watch-Stand für Nina."""
+    from tests.conftest import FakeEpisode, FakeGateway, FakeMovie, FakeServer, FakeShow
+
+    movies = [FakeMovie(m.ratingKey, m.title, m.originallyAvailableAt.strftime("%Y-%m-%d"))
+              for m in plex_data["movies"]]
+    episodes = [
+        FakeEpisode(e.ratingKey, e.grandparentRatingKey, e.grandparentTitle, e.title,
+                    e.originallyAvailableAt.strftime("%Y-%m-%d"), e.parentIndex, e.index)
+        for e in plex_data["episodes"]
+    ]
+    if watched_episode:
+        episodes[0].viewCount = 1  # Nina hat den Knight-Rider-Piloten schon gesehen
+    shows = [
+        FakeShow(100, "Knight Rider", 1982, [e for e in episodes if e.grandparentRatingKey == 100]),
+        FakeShow(200, "Das A-Team", 1983, [e for e in episodes if e.grandparentRatingKey == 200]),
+    ]
+    ninas_server = FakeServer(movies, episodes, shows=shows)
+    alex_server = FakeServer(plex_data["movies"], plex_data["episodes"], shows=plex_data["shows"])
+    return FakeGateway(alex_server, servers={"Nina": ninas_server}), ninas_server
+
+
+def test_copy_creates_the_collection_for_the_other_profile(session, almanach, gateway):
+    db.add_to_almanach(session, almanach, "100", "show", "Knight Rider")
+    db.add_to_almanach(session, almanach, "2", "movie", "Brazil")
+
+    result = copy_almanach(session, almanach, "Nina", gateway=gateway)
+
+    assert result.ok and result.created and result.added == 2 and result.total == 2
+
+    kopie = db.list_almanachs(session, "Nina")[0]
+    assert kopie.name == "Star Wars"
+    assert kopie.target_playlist_name == "Plex Almanach – Nina · Star Wars"
+    assert db.almanach_keys(session, kopie.id) == {"100", "2"}
+    # Das Original bleibt unangetastet.
+    assert len(db.list_almanachs(session, "Alex")) == 1
+
+
+def test_copy_builds_against_the_other_profiles_watch_history(session, almanach, plex_data):
+    """Ninas Playlist enthält nur, was Nina selbst noch nicht gesehen hat."""
+    gateway, ninas_server = _nina_gateway(plex_data, watched_episode=True)
+    db.add_to_almanach(session, almanach, "100", "show", "Knight Rider")
+
+    result = copy_almanach(session, almanach, "Nina", gateway=gateway)
+
+    assert result.sync.ok
+    assert result.sync.item_count == 1          # eine Folge hat Nina schon gesehen
+    assert "Nina" in gateway.connections
+    playlist = ninas_server.playlists()[0]
+    assert playlist.title == "Plex Almanach – Nina · Star Wars"
+    assert [i.title for i in playlist.items()] == ["Folge 2"]
+
+    # Alex' eigene Playlist bleibt davon unberührt.
+    assert gateway.server.playlists() == []
+
+
+def test_copying_twice_does_not_duplicate(session, almanach, gateway):
+    db.add_to_almanach(session, almanach, "2", "movie", "Brazil")
+    copy_almanach(session, almanach, "Nina", gateway=gateway)
+
+    second = copy_almanach(session, almanach, "Nina", gateway=gateway)
+
+    assert second.ok and second.unchanged and second.total == 1
+    assert len(db.list_almanachs(session, "Nina")) == 1
+
+
+def test_copying_again_tops_up_missing_entries(session, almanach, gateway):
+    db.add_to_almanach(session, almanach, "2", "movie", "Brazil")
+    copy_almanach(session, almanach, "Nina", gateway=gateway)
+
+    db.add_to_almanach(session, almanach, "100", "show", "Knight Rider")
+    result = copy_almanach(session, almanach, "Nina", gateway=gateway)
+
+    assert not result.created and result.added == 1 and result.total == 2
+    assert db.almanach_keys(session, db.list_almanachs(session, "Nina")[0].id) == {"2", "100"}
+
+
+def test_copy_keeps_entries_the_other_profile_added_itself(session, almanach, gateway):
+    db.add_to_almanach(session, almanach, "2", "movie", "Brazil")
+    copy_almanach(session, almanach, "Nina", gateway=gateway)
+    kopie = db.list_almanachs(session, "Nina")[0]
+    db.add_to_almanach(session, kopie, "3", "movie", "Matrix")  # Ninas eigene Ergänzung
+
+    copy_almanach(session, almanach, "Nina", gateway=gateway)
+
+    assert db.almanach_keys(session, kopie.id) == {"2", "3"}
+
+
+def test_copy_takes_the_cover_along(session, almanach, gateway, png_image):
+    from app import covers
+
+    almanach.cover_path = covers.store(covers.almanach_stem(almanach.id), png_image)
+    db.add_to_almanach(session, almanach, "2", "movie", "Brazil")
+
+    copy_almanach(session, almanach, "Nina", gateway=gateway)
+
+    kopie = db.list_almanachs(session, "Nina")[0]
+    assert kopie.cover_path == f"almanach-{kopie.id}.png"
+    assert covers.path_for(kopie.cover_path).read_bytes() == png_image
+
+
+def test_copy_to_the_owner_is_refused(session, almanach, gateway):
+    result = copy_almanach(session, almanach, "Alex", gateway=gateway)
+
+    assert not result.ok and "bereits" in result.error
+    assert len(db.list_almanachs(session, "Alex")) == 1
+
+
+def test_copy_without_building(session, almanach, gateway):
+    db.add_to_almanach(session, almanach, "2", "movie", "Brazil")
+
+    result = copy_almanach(session, almanach, "Nina", gateway=gateway, build=False)
+
+    assert result.sync is None
+    assert gateway.server.playlists() == []
+
+
+def test_copy_to_several_profiles(session, almanach, gateway):
+    db.add_to_almanach(session, almanach, "2", "movie", "Brazil")
+
+    results = copy_almanach_to_users(session, almanach, ["Nina", "Alex"], gateway=gateway)
+
+    assert [r.user_id for r in results] == ["Nina", "Alex"]
+    assert results[0].ok and not results[1].ok  # Alex ist der Eigentümer
+
+
+def test_copies_are_kept_up_to_date_by_the_scheduler(session, almanach, gateway):
+    from app.almanach import sync_all_almanachs
+
+    db.add_to_almanach(session, almanach, "2", "movie", "Brazil")
+    copy_almanach(session, almanach, "Nina", gateway=gateway, build=False)
+
+    results = sync_all_almanachs(session, trigger="poll", gateway=gateway)
+
+    assert sorted(r.playlist_name for r in results) == [
+        "Plex Almanach – Alex · Star Wars",
+        "Plex Almanach – Nina · Star Wars",
+    ]

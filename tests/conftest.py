@@ -247,10 +247,18 @@ class FakeServer:
 class FakeGateway:
     """Duck-Type-Ersatz für PlexGateway."""
 
-    def __init__(self, server: FakeServer, users: Optional[list] = None):
+    def __init__(
+        self,
+        server: FakeServer,
+        users: Optional[list] = None,
+        servers: Optional[dict[str, FakeServer]] = None,
+    ):
         from app.plex_client import HomeUser
 
         self.server = server
+        # Je Nutzer ein eigener Server-Doppelgänger, um unterschiedliche
+        # Watch-Stände abzubilden; ohne Eintrag gilt der Standard.
+        self.servers = servers or {}
         self.connections: list[str] = []
         self.users = users if users is not None else [
             HomeUser(id="Alex", title="Alex", is_admin=True),
@@ -262,7 +270,7 @@ class FakeGateway:
 
     def connect_as(self, user_id: str) -> FakeServer:
         self.connections.append(user_id)
-        return self.server
+        return self.servers.get(user_id, self.server)
 
     def movie_section(self, server: FakeServer) -> FakeSection:
         return server.movie_section

@@ -96,6 +96,18 @@ def path_for(filename: Optional[str]) -> Optional[Path]:
     return candidate if candidate.is_file() else None
 
 
+def copy(source_filename: Optional[str], target_stem: str) -> Optional[str]:
+    """Cover einer Sammlung für eine Kopie übernehmen."""
+    source = path_for(source_filename)
+    if source is None:
+        return None
+    try:
+        return store(target_stem, source.read_bytes())
+    except CoverError as exc:  # pragma: no cover - abgelegte Datei war gültig
+        log.warning("Cover konnte nicht kopiert werden: %s", exc)
+        return None
+
+
 def remove(stem: str) -> bool:
     """Alle Fassungen eines Covers löschen."""
     removed = False

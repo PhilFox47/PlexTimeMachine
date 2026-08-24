@@ -15,7 +15,7 @@ from typing import Any, Iterable, Optional, Sequence
 from plexapi.exceptions import NotFound
 from sqlmodel import Session
 
-from app import db
+from app import covers, db
 from app.config import get_settings
 from app.plex_client import PlexGateway, PlexUnavailable, get_gateway
 from app.sync_engine import (
@@ -332,6 +332,104 @@ def delete_playlist(almanach: db.Almanach, gateway: Optional[PlexGateway] = None
             playlist.delete()
             return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# In andere Profile übernehmen
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CopyResult:
+    """Was beim Übernehmen in ein Profil herauskam."""
+
+    user_id: str
+    created: bool = False
+    added: int = 0
+    total: int = 0
+    sync: Optional[SyncResult] = None
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return not self.error
+
+    @property
+    def unchanged(self) -> bool:
+        return self.ok and not self.created and self.added == 0
+
+
+def copy_almanach(
+    session: Session,
+    source: db.Almanach,
+    target_user_id: str,
+    gateway: Optional[PlexGateway] = None,
+    build: bool = True,
+) -> CopyResult:
+    """Sammlung in das Profil eines anderen Home-Users übernehmen.
+
+    Die Kopie gehört dem Zielprofil und wird deshalb gegen dessen eigenen
+    Watch-Status gebaut – jeder sieht in seiner Playlist nur, was er selbst
+    noch nicht gesehen hat.
+
+    Existiert dort bereits eine Sammlung gleichen Namens, wird sie ergänzt
+    statt eine zweite anzulegen. Ein erneutes Übernehmen gleicht also nur die
+    fehlenden Titel nach.
+    """
+    if target_user_id == source.plex_user_id:
+        return CopyResult(
+            user_id=target_user_id, error="Die Sammlung gehört diesem Profil bereits."
+        )
+
+    target = db.find_almanach_by_name(session, target_user_id, source.name)
+    created = target is None
+    if target is None:
+        target = db.create_almanach(session, target_user_id, source.name)
+        if source.cover_path:
+            target.cover_path = covers.copy(
+                source.cover_path, covers.almanach_stem(target.id)
+            )
+            target.cover_applied_at = None
+            session.add(target)
+            session.commit()
+
+    present = db.almanach_keys(session, target.id)
+    added = 0
+    for entry in db.list_almanach_entries(session, source.id):
+        if entry.plex_rating_key in present:
+            continue
+        db.add_to_almanach(
+            session,
+            target,
+            entry.plex_rating_key,
+            entry.media_type,
+            entry.title,
+            entry.year,
+        )
+        added += 1
+
+    result = CopyResult(
+        user_id=target_user_id,
+        created=created,
+        added=added,
+        total=len(db.list_almanach_entries(session, target.id)),
+    )
+    if build:
+        result.sync = sync_almanach(session, target, trigger="kopie", gateway=gateway)
+    return result
+
+
+def copy_almanach_to_users(
+    session: Session,
+    source: db.Almanach,
+    target_user_ids: Iterable[str],
+    gateway: Optional[PlexGateway] = None,
+    build: bool = True,
+) -> list[CopyResult]:
+    return [
+        copy_almanach(session, source, user_id, gateway=gateway, build=build)
+        for user_id in target_user_ids
+    ]
 
 
 # ---------------------------------------------------------------------------

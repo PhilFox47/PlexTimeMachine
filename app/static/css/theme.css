@@ -543,6 +543,38 @@ tbody tr:hover { background: rgba(41, 215, 200, 0.05); }
   box-shadow: none;
 }
 
+/* --- Profile übernehmen -------------------------------------------------- */
+
+.profile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.profile-option {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel-2);
+  cursor: pointer;
+}
+
+.profile-option:hover { border-color: var(--teal-dim); }
+
+.profile-option input[type="checkbox"] {
+  accent-color: var(--teal);
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+
+.profile-name { color: var(--text); letter-spacing: 0.06em; }
+
 /* --- Cover -------------------------------------------------------------- */
 
 .cover-box {

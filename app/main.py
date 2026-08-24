@@ -437,7 +437,27 @@ def _detail_context(request: Request, session: Session, almanach) -> dict:
     context = dashboard_context(request, session)
     context["almanach"] = almanach
     context["entries"] = db.list_almanach_entries(session, almanach.id)
+    context["share_targets"] = _share_targets(session, almanach, context["users"])
     return context
+
+
+def _share_targets(session: Session, almanach, users) -> list[dict]:
+    """Andere Home-User samt Hinweis, ob sie die Sammlung schon führen."""
+    targets = []
+    for user in users:
+        if user.id == almanach.plex_user_id:
+            continue
+        existing = db.find_almanach_by_name(session, user.id, almanach.name)
+        targets.append(
+            {
+                "user": user,
+                "exists": existing is not None,
+                "count": len(db.list_almanach_entries(session, existing.id))
+                if existing
+                else 0,
+            }
+        )
+    return targets
 
 
 @app.get("/almanach", response_class=HTMLResponse)
@@ -590,6 +610,39 @@ async def almanach_sync(
             "status": result,
             "status_title_ok": "Almanach erstellt",
             "status_title_error": "Almanach nicht erstellt",
+        },
+    )
+
+
+@app.post("/almanach/{almanach_id}/share", response_class=HTMLResponse)
+async def almanach_share(
+    request: Request,
+    almanach_id: int,
+    profiles: list[str] = Form(default=[]),
+    session: Session = Depends(db.get_session),
+):
+    """Sammlung in andere Profile übernehmen und dort gleich bauen."""
+    almanach = _require_almanach(request, session, almanach_id)
+    users, _ = load_users()
+    known = {user.id for user in users}
+    targets = [
+        name for name in profiles if name in known and name != almanach.plex_user_id
+    ]
+
+    results = []
+    if targets:
+        results = await run_in_threadpool(
+            almanach_lib.copy_almanach_to_users, session, almanach, targets
+        )
+
+    return templates.TemplateResponse(
+        request,
+        "partials/almanach_share.html",
+        {
+            "almanach": almanach,
+            "share_targets": _share_targets(session, almanach, users),
+            "share_results": results,
+            "share_message": "" if targets else "Kein Profil gewählt.",
         },
     )
 

@@ -588,3 +588,66 @@ def test_dashboard_and_overview_show_the_cover_controls(client, session, almanac
     )
     overview = client.get("/almanach").text
     assert f'src="/almanach/{almanach.id}/cover/image"' in overview
+
+
+# ---------------------------------------------------------------------------
+# Sammlung in andere Profile übernehmen
+# ---------------------------------------------------------------------------
+
+
+def test_share_panel_lists_the_other_profiles(client, almanach):
+    body = client.get(f"/almanach/{almanach.id}").text
+
+    assert "Für andere Profile" in body
+    # Nur die Auswahlkästchen betrachten – "Alex" steht auch im Nutzer-Umschalter.
+    assert 'name="profiles" value="Nina"' in body
+    assert 'name="profiles" value="Alex"' not in body   # der Eigentümer nicht
+    assert "noch nicht vorhanden" in body
+
+
+def test_share_copies_the_collection_and_builds_it(client, session, gateway, almanach):
+    db.add_to_almanach(session, almanach, "100", "show", "Knight Rider")
+
+    response = client.post(f"/almanach/{almanach.id}/share", data={"profiles": ["Nina"]})
+
+    assert response.status_code == 200
+    assert "Sammlung angelegt mit 1 Einträgen" in response.text
+    assert "Plex Almanach – Nina · Star Wars" in response.text
+
+    kopie = db.list_almanachs(session, "Nina")[0]
+    assert db.almanach_keys(session, kopie.id) == {"100"}
+    assert [p.title for p in gateway.server.playlists()] == ["Plex Almanach – Nina · Star Wars"]
+
+
+def test_share_panel_shows_existing_copies(client, session, almanach):
+    db.add_to_almanach(session, almanach, "100", "show", "Knight Rider")
+    client.post(f"/almanach/{almanach.id}/share", data={"profiles": ["Nina"]})
+
+    body = client.get(f"/almanach/{almanach.id}").text
+
+    assert "hat die Sammlung bereits (1 Einträge)" in body
+
+
+def test_share_without_a_profile_says_so(client, almanach):
+    response = client.post(f"/almanach/{almanach.id}/share", data={})
+
+    assert "Kein Profil gewählt" in response.text
+
+
+def test_share_ignores_unknown_profiles(client, session, almanach):
+    db.add_to_almanach(session, almanach, "100", "show", "Knight Rider")
+
+    response = client.post(
+        f"/almanach/{almanach.id}/share", data={"profiles": ["Eindringling"]}
+    )
+
+    assert "Kein Profil gewählt" in response.text
+    assert db.list_almanachs(session, "Eindringling") == []
+
+
+def test_share_of_a_foreign_collection_is_refused(client, session):
+    fremd = db.create_almanach(session, "Nina", "Ninas Sammlung")
+
+    response = client.post(f"/almanach/{fremd.id}/share", data={"profiles": ["Alex"]})
+
+    assert response.status_code == 404

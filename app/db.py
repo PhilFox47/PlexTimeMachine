@@ -367,6 +367,16 @@ def get_almanach(session: Session, user_id: str, almanach_id: int) -> Optional[A
     return almanach
 
 
+def find_almanach_by_name(
+    session: Session, user_id: str, name: str
+) -> Optional[Almanach]:
+    """Sammlung eines Nutzers anhand des Namens – für das Übernehmen in Profile."""
+    stmt = select(Almanach).where(
+        Almanach.plex_user_id == user_id, Almanach.name == name
+    )
+    return session.exec(stmt).first()
+
+
 def rename_almanach(session: Session, almanach: Almanach, name: str) -> Almanach:
     """Umbenennen – der Playlist-Name zieht mit, sofern er dem Muster folgt."""
     settings = get_settings()
