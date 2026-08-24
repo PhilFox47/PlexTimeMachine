@@ -463,3 +463,128 @@ def test_reset_reports_when_nothing_is_watched(client, session, almanach):
 
     assert "bereits alles als ungesehen" in body
     assert "Ja," not in body  # kein Ausführen-Knopf
+
+
+# ---------------------------------------------------------------------------
+# Cover-Bilder
+# ---------------------------------------------------------------------------
+
+
+def test_cover_upload_reaches_plex_and_is_shown(client, session, gateway, almanach, png_image):
+    db.add_to_almanach(session, almanach, "2", "movie", "Brazil")
+    client.post(f"/almanach/{almanach.id}/sync")  # Playlist existiert schon
+
+    response = client.post(
+        f"/almanach/{almanach.id}/cover",
+        files={"cover": ("poster.png", png_image, "image/png")},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/almanach/{almanach.id}?cover=uebertragen"
+    assert gateway.server.playlists()[0].posters == [png_image]
+
+    session.expire_all()
+    stored = db.get_almanach(session, "Alex", almanach.id)
+    assert stored.cover_path == f"almanach-{almanach.id}.png"
+    assert stored.cover_applied_at is not None
+
+    # Die Vorschau liefert genau das hochgeladene Bild aus.
+    image = client.get(f"/almanach/{almanach.id}/cover/image")
+    assert image.status_code == 200
+    assert image.content == png_image
+    assert image.headers["content-type"] == "image/png"
+
+
+def test_cover_upload_without_playlist_is_kept_for_later(client, session, almanach, png_image):
+    response = client.post(
+        f"/almanach/{almanach.id}/cover",
+        files={"cover": ("poster.png", png_image, "image/png")},
+        follow_redirects=False,
+    )
+
+    assert response.headers["location"] == f"/almanach/{almanach.id}?cover=gespeichert"
+    session.expire_all()
+    stored = db.get_almanach(session, "Alex", almanach.id)
+    assert stored.cover_path and stored.cover_applied_at is None
+
+
+def test_cover_upload_rejects_non_images(client, session, almanach):
+    response = client.post(
+        f"/almanach/{almanach.id}/cover",
+        files={"cover": ("schadhaft.png", b"<html>kein Bild</html>", "image/png")},
+        follow_redirects=False,
+    )
+
+    assert "cover_error" in response.headers["location"]
+    session.expire_all()
+    assert db.get_almanach(session, "Alex", almanach.id).cover_path is None
+
+
+def test_cover_notice_is_rendered_on_the_page(client, almanach):
+    body = client.get(f"/almanach/{almanach.id}", params={"cover_error": "Zu groß."}).text
+
+    assert "Cover nicht gesetzt" in body and "Zu groß." in body
+
+
+def test_cover_delete_removes_file_and_poster(client, session, gateway, almanach, png_image):
+    db.add_to_almanach(session, almanach, "2", "movie", "Brazil")
+    client.post(f"/almanach/{almanach.id}/sync")
+    client.post(
+        f"/almanach/{almanach.id}/cover",
+        files={"cover": ("poster.png", png_image, "image/png")},
+    )
+
+    response = client.post(f"/almanach/{almanach.id}/cover/delete", follow_redirects=False)
+
+    assert response.headers["location"] == f"/almanach/{almanach.id}?cover=entfernt"
+    session.expire_all()
+    assert db.get_almanach(session, "Alex", almanach.id).cover_path is None
+    assert gateway.server.playlists()[0].poster_deleted is True
+    assert client.get(f"/almanach/{almanach.id}/cover/image").status_code == 404
+
+
+def test_cover_of_another_user_is_not_reachable(client, session, png_image):
+    fremd = db.create_almanach(session, "Nina", "Ninas Sammlung")
+
+    assert client.get(f"/almanach/{fremd.id}/cover/image").status_code == 404
+    assert client.post(
+        f"/almanach/{fremd.id}/cover",
+        files={"cover": ("poster.png", png_image, "image/png")},
+    ).status_code == 404
+
+
+def test_timemachine_cover_upload_and_delete(client, session, gateway, png_image):
+    import datetime
+
+    db.set_period(session, "Alex", datetime.date(1985, 1, 1), datetime.date(1985, 12, 31))
+    client.post("/sync")
+
+    response = client.post(
+        "/cover/timemachine",
+        files={"cover": ("poster.png", png_image, "image/png")},
+        follow_redirects=False,
+    )
+
+    assert response.headers["location"] == "/?cover=uebertragen"
+    assert gateway.server.playlists()[0].posters == [png_image]
+    session.expire_all()
+    assert db.get_or_create_user_state(session, "Alex").cover_path is not None
+
+    assert client.get("/cover/timemachine/image").content == png_image
+
+    client.post("/cover/timemachine/delete")
+    session.expire_all()
+    assert db.get_or_create_user_state(session, "Alex").cover_path is None
+
+
+def test_dashboard_and_overview_show_the_cover_controls(client, session, almanach, png_image):
+    dashboard = client.get("/").text
+    assert 'action="/cover/timemachine"' in dashboard and 'name="cover"' in dashboard
+
+    client.post(
+        f"/almanach/{almanach.id}/cover",
+        files={"cover": ("poster.png", png_image, "image/png")},
+    )
+    overview = client.get("/almanach").text
+    assert f'src="/almanach/{almanach.id}/cover/image"' in overview

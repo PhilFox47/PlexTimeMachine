@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import os
+import struct
+import zlib
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
 
 import pytest
@@ -19,6 +22,7 @@ def fresh_db(tmp_path, monkeypatch):
     from app import config, db
 
     monkeypatch.setenv("PTM_DATABASE_URL", f"sqlite:///{tmp_path/'test.db'}")
+    monkeypatch.setenv("PTM_COVER_DIR", str(tmp_path / "covers"))
     config.get_settings.cache_clear()
     db.reset_engine()
     db.init_db()
@@ -175,6 +179,8 @@ class FakePlaylist:
         self.title = title
         self._items = list(items)
         self.deleted = False
+        self.posters: list = []
+        self.poster_deleted = False
 
     def items(self) -> list[Any]:
         return list(self._items)
@@ -188,6 +194,13 @@ class FakePlaylist:
 
     def editTitle(self, title: str, locked: bool = True) -> None:
         self.title = title
+
+    def uploadPoster(self, url=None, filepath=None) -> None:
+        self.posters.append(Path(filepath).read_bytes() if filepath else url)
+
+    def deletePoster(self) -> None:
+        self.posters.clear()
+        self.poster_deleted = True
 
     def delete(self) -> None:
         self.deleted = True
@@ -283,3 +296,26 @@ def gateway(plex_data) -> FakeGateway:
     return FakeGateway(
         FakeServer(plex_data["movies"], plex_data["episodes"], shows=plex_data["shows"])
     )
+
+
+def make_png(width: int = 2, height: int = 3, filler: bytes = b"\xff\x60\x20") -> bytes:
+    """Ein echtes (winziges) PNG – kein Attrappen-Byteschrott."""
+
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        body = kind + payload
+        return struct.pack(">I", len(payload)) + body + struct.pack(
+            ">I", zlib.crc32(body) & 0xFFFFFFFF
+        )
+
+    raw = b"".join(b"\x00" + filler * width for _ in range(height))
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(raw))
+        + chunk(b"IEND", b"")
+    )
+
+
+@pytest.fixture
+def png_image() -> bytes:
+    return make_png()

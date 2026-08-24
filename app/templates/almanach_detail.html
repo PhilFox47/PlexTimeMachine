@@ -22,6 +22,19 @@
 </section>
 
 <section class="panel">
+  <h2>Cover der Playlist</h2>
+
+  {% include "partials/cover_notice.html" %}
+
+  {% with has_cover = almanach.cover_path,
+          cover_url = "/almanach/" ~ almanach.id ~ "/cover/image",
+          upload_action = "/almanach/" ~ almanach.id ~ "/cover",
+          delete_action = "/almanach/" ~ almanach.id ~ "/cover/delete" %}
+    {% include "partials/cover.html" %}
+  {% endwith %}
+</section>
+
+<section class="panel">
   <h2>Archiv durchsuchen</h2>
 
   {# Ziel, Swap und Indikator erbt das Eingabefeld vom Formular; es feuert

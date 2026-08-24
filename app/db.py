@@ -34,6 +34,8 @@ class UserState(SQLModel, table=True):
     target_playlist_name: str = ""
     last_synced_at: Optional[datetime] = None
     last_item_count: int = 0
+    cover_path: Optional[str] = None
+    cover_applied_at: Optional[datetime] = None
 
     @property
     def has_period(self) -> bool:
@@ -69,6 +71,8 @@ class Almanach(SQLModel, table=True):
     target_playlist_name: str = ""
     last_synced_at: Optional[datetime] = None
     last_item_count: int = 0
+    cover_path: Optional[str] = None
+    cover_applied_at: Optional[datetime] = None
 
 
 class AlmanachEntry(SQLModel, table=True):

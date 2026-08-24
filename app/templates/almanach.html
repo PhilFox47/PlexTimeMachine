@@ -18,11 +18,18 @@
   <div class="table-wrap">
     <table>
       <thead>
-        <tr><th>Name</th><th>Playlist</th><th>Zuletzt erstellt</th><th>Titel</th><th></th></tr>
+        <tr><th></th><th>Name</th><th>Playlist</th><th>Zuletzt erstellt</th><th>Titel</th><th></th></tr>
       </thead>
       <tbody>
       {% for item in almanachs %}
         <tr>
+          <td>
+            {% if item.cover_path %}
+              <img class="poster" alt="" src="/almanach/{{ item.id }}/cover/image">
+            {% else %}
+              <div class="poster-fallback">?</div>
+            {% endif %}
+          </td>
           <td class="cell-title"><a href="/almanach/{{ item.id }}">{{ item.name }}</a></td>
           <td class="cell-sub">{{ item.target_playlist_name }}</td>
           <td class="mono">

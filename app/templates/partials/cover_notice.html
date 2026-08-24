@@ -1,0 +1,15 @@
+{# Rückmeldung nach dem Hochladen – kommt als Query-Parameter zurück. #}
+{% set cover_state = request.query_params.get('cover') %}
+{% set cover_error = request.query_params.get('cover_error') %}
+{% if cover_error %}
+  <div class="notice error"><strong>Cover nicht gesetzt.</strong> {{ cover_error }}</div>
+{% elif cover_state == 'uebertragen' %}
+  <div class="notice ok"><strong>Cover gesetzt.</strong> Plex hat das neue Poster bereits.</div>
+{% elif cover_state == 'gespeichert' %}
+  <div class="notice">
+    <strong>Cover gespeichert.</strong> Es wird übertragen, sobald die Playlist das
+    nächste Mal gebaut wird.
+  </div>
+{% elif cover_state == 'entfernt' %}
+  <div class="notice muted">Cover entfernt.</div>
+{% endif %}

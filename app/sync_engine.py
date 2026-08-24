@@ -9,7 +9,7 @@ from typing import Any, Iterable, Optional, Sequence
 
 from sqlmodel import Session
 
-from app import db
+from app import covers, db
 from app.config import get_settings
 from app.formatting import format_date
 from app.plex_client import PlexGateway, PlexUnavailable, get_gateway
@@ -303,18 +303,31 @@ def _chunked(items: Sequence[Any], size: int) -> Iterable[Sequence[Any]]:
         yield items[start : start + size]
 
 
-def apply_playlist(server: Any, name: str, objects: Sequence[Any]) -> bool:
+@dataclass
+class PlaylistOutcome:
+    """Was beim Schreiben der Playlist herauskam."""
+
+    playlist: Any = field(default=None, repr=False)
+    created: bool = False
+
+    @property
+    def exists(self) -> bool:
+        return self.playlist is not None
+
+
+def apply_playlist(server: Any, name: str, objects: Sequence[Any]) -> PlaylistOutcome:
     """Die feste Playlist leeren und neu befüllen.
 
-    Rückgabe: True, wenn die Playlist danach existiert.  Eine Playlist ohne
-    Items kann Plex nicht halten – in dem Fall wird sie gelöscht.
+    Eine Playlist ohne Items kann Plex nicht halten – in dem Fall wird sie
+    gelöscht. ``created`` sagt, ob die Playlist neu angelegt wurde; nur dann
+    muss ein Cover erneut übertragen werden.
     """
     playlist = _find_playlist(server, name)
 
     if not objects:
         if playlist is not None:
             playlist.delete()
-        return False
+        return PlaylistOutcome()
 
     if playlist is not None:
         current = list(playlist.items())
@@ -323,6 +336,7 @@ def apply_playlist(server: Any, name: str, objects: Sequence[Any]) -> bool:
             # Plex entfernt leere Playlists teilweise selbst -> neu suchen.
             playlist = _find_playlist(server, name)
 
+    created = playlist is None
     head, *tail = list(_chunked(list(objects), PLAYLIST_CHUNK_SIZE))
     if playlist is None:
         playlist = server.createPlaylist(name, items=list(head))
@@ -330,6 +344,61 @@ def apply_playlist(server: Any, name: str, objects: Sequence[Any]) -> bool:
         playlist.addItems(list(head))
     for chunk in tail:
         playlist.addItems(list(chunk))
+    return PlaylistOutcome(playlist=playlist, created=created)
+
+
+# ---------------------------------------------------------------------------
+# Cover
+# ---------------------------------------------------------------------------
+
+
+def upload_cover(playlist: Any, cover_file: Any) -> None:
+    """Cover als Poster an Plex schicken (die Bytes gehen mit, kein Pfad)."""
+    playlist.uploadPoster(filepath=str(cover_file))
+
+
+def apply_cover_after_sync(outcome: PlaylistOutcome, cover_path: Optional[str],
+                           already_applied: bool) -> bool:
+    """Cover übertragen, wenn die Playlist neu ist oder es noch nie dran war.
+
+    Fehler bleiben folgenlos: die Playlist steht, das Poster kommt beim
+    nächsten Lauf erneut dran.
+    """
+    cover_file = covers.path_for(cover_path)
+    if not outcome.exists or cover_file is None:
+        return False
+    if already_applied and not outcome.created:
+        return False
+    try:
+        upload_cover(outcome.playlist, cover_file)
+    except Exception as exc:  # pragma: no cover - Plex kann ablehnen
+        log.warning("Cover nicht übertragen: %s", exc)
+        return False
+    return True
+
+
+def push_cover(
+    gateway: PlexGateway, user_id: str, playlist_name: str, cover_path: Optional[str]
+) -> bool:
+    """Cover sofort übertragen – für den Moment, in dem es hochgeladen wird."""
+    cover_file = covers.path_for(cover_path)
+    if cover_file is None:
+        return False
+    server = gateway.connect_as(user_id)
+    playlist = _find_playlist(server, playlist_name)
+    if playlist is None:
+        return False  # Playlist gibt es noch nicht; der nächste Sync erledigt es
+    upload_cover(playlist, cover_file)
+    return True
+
+
+def clear_cover(gateway: PlexGateway, user_id: str, playlist_name: str) -> bool:
+    """Poster in Plex wieder entfernen."""
+    server = gateway.connect_as(user_id)
+    playlist = _find_playlist(server, playlist_name)
+    if playlist is None:
+        return False
+    playlist.deletePoster()
     return True
 
 
@@ -359,7 +428,10 @@ def sync_user(
         server = gateway.connect_as(user_id)
         raw = collect_items(gateway, server, start, end)
         items, dropped = apply_blacklist(raw, db.blacklist_keys(session, user_id))
-        exists = apply_playlist(server, playlist_name, [i.plex_object for i in items])
+        outcome = apply_playlist(server, playlist_name, [i.plex_object for i in items])
+        cover_done = apply_cover_after_sync(
+            outcome, state.cover_path, state.cover_applied_at is not None
+        )
     except PlexUnavailable as exc:
         return SyncResult(
             user_id=user_id, playlist_name=playlist_name, trigger=trigger, error=str(exc)
@@ -376,13 +448,15 @@ def sync_user(
     state.last_synced_at = db.utcnow()
     state.last_item_count = len(items)
     state.target_playlist_name = playlist_name
+    if cover_done:
+        state.cover_applied_at = db.utcnow()
     session.add(state)
     session.commit()
 
     note = f"{dropped} durch Blacklist ausgeschlossen" if dropped else ""
     db.log_journey(session, user_id, start, end, len(items), trigger=trigger, note=note)
 
-    if exists:
+    if outcome.exists:
         message = f"{len(items)} Titel in »{playlist_name}« gespeichert."
     else:
         message = (

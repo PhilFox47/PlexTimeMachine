@@ -22,6 +22,7 @@ from app.sync_engine import (
     PreviewItem,
     PreviewResult,
     SyncResult,
+    apply_cover_after_sync,
     apply_playlist,
     to_preview_item,
 )
@@ -240,7 +241,10 @@ def sync_almanach(
     try:
         server = gateway.connect_as(user_id)
         items, missing = collect_almanach_items(server, entries)
-        exists = apply_playlist(server, playlist_name, [i.plex_object for i in items])
+        outcome = apply_playlist(server, playlist_name, [i.plex_object for i in items])
+        cover_done = apply_cover_after_sync(
+            outcome, almanach.cover_path, almanach.cover_applied_at is not None
+        )
     except PlexUnavailable as exc:
         return SyncResult(
             user_id=user_id, playlist_name=playlist_name, trigger=trigger, error=str(exc)
@@ -257,6 +261,8 @@ def sync_almanach(
     almanach.last_synced_at = db.utcnow()
     almanach.last_item_count = len(items)
     almanach.target_playlist_name = playlist_name
+    if cover_done:
+        almanach.cover_applied_at = db.utcnow()
     session.add(almanach)
     session.commit()
 
@@ -267,7 +273,7 @@ def sync_almanach(
         session, user_id, None, None, len(items), trigger=trigger, note=note, kind="almanach"
     )
 
-    if exists:
+    if outcome.exists:
         message = f"{len(items)} ungesehene Titel in »{playlist_name}« gespeichert."
     else:
         message = (

@@ -1,0 +1,29 @@
+{# Cover-Kachel: Vorschau plus Formulare zum Setzen und Entfernen.
+   Erwartet cover_url, upload_action, delete_action und has_cover. #}
+<div class="cover-box">
+  {% if has_cover %}
+    <img class="cover-preview" src="{{ cover_url }}" alt="Aktuelles Cover">
+  {% else %}
+    <div class="cover-empty">kein<br>Cover</div>
+  {% endif %}
+
+  <div class="cover-actions">
+    <form method="post" action="{{ upload_action }}" enctype="multipart/form-data">
+      <input type="file" name="cover" required
+             accept="image/jpeg,image/png,image/gif,image/webp">
+      <button class="btn" type="submit">{{ 'Cover ersetzen' if has_cover else 'Cover setzen' }}</button>
+    </form>
+
+    {% if has_cover %}
+    <form method="post" action="{{ delete_action }}" class="inline-form"
+          onsubmit="return confirm('Cover entfernen?')">
+      <button class="btn" type="submit">Cover entfernen</button>
+    </form>
+    {% endif %}
+
+    <p class="cell-sub" style="margin:0">
+      JPEG, PNG, GIF oder WebP bis {{ (settings.cover_max_bytes // 1048576) }} MB.
+      Plex zeigt Poster hochkant (2:3) am besten.
+    </p>
+  </div>
+</div>

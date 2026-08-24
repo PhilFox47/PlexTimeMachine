@@ -4,26 +4,44 @@ from __future__ import annotations
 
 import json
 import logging
+from urllib.parse import urlencode
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional
 
 import requests
-from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, Response
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+)
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session
 from starlette.concurrency import run_in_threadpool
 
-from app import __version__, db
+from app import __version__, covers, db
 from app import almanach as almanach_lib
 from app.config import get_settings
 from app.formatting import format_date, format_datetime, format_period, week_of, weekday_short
 from app.plex_client import HomeUser, PlexUnavailable, get_gateway
 from app.scheduler import SyncScheduler, get_scheduler, set_scheduler
-from app.sync_engine import PreviewResult, SyncResult, build_preview, sync_user
+from app.sync_engine import (
+    PreviewResult,
+    SyncResult,
+    build_preview,
+    clear_cover,
+    push_cover,
+    sync_user,
+)
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s"
@@ -94,6 +112,56 @@ def parse_period(start: str, end: str) -> tuple[Optional[date], Optional[date], 
     if end_date < start_date:
         start_date, end_date = end_date, start_date
     return start_date, end_date, ""
+
+
+async def _read_cover(upload: UploadFile) -> bytes:
+    """Hochgeladene Datei einlesen – ein Byte über dem Limit reicht zum Abbruch."""
+    limit = get_settings().cover_max_bytes
+    data = await upload.read(limit + 1)
+    await upload.close()
+    return data
+
+
+def _store_cover(stem: str, data: bytes) -> tuple[Optional[str], str]:
+    """(Dateiname, Fehlertext) – genau eines von beidem ist gesetzt."""
+    try:
+        return covers.store(stem, data), ""
+    except covers.CoverError as exc:
+        return None, str(exc)
+
+
+def _cover_redirect(target: str, status: str = "", error: str = "") -> RedirectResponse:
+    query = urlencode({k: v for k, v in (("cover", status), ("cover_error", error)) if v})
+    return RedirectResponse(f"{target}?{query}" if query else target, status_code=303)
+
+
+def _push_cover_quietly(user_id: str, playlist_name: str, cover_path: str) -> str:
+    """Cover sofort übertragen. Rückgabe: Statuscode für die Rückmeldung."""
+    try:
+        if push_cover(get_gateway(), user_id, playlist_name, cover_path):
+            return "uebertragen"
+        return "gespeichert"  # Playlist existiert noch nicht
+    except Exception as exc:  # pragma: no cover - Plex kann offline sein
+        log.warning("Cover für »%s« nicht übertragen: %s", playlist_name, exc)
+        return "gespeichert"
+
+
+def _clear_cover_quietly(user_id: str, playlist_name: str) -> None:
+    try:
+        clear_cover(get_gateway(), user_id, playlist_name)
+    except Exception as exc:  # pragma: no cover - Plex kann offline sein
+        log.warning("Poster von »%s« nicht entfernt: %s", playlist_name, exc)
+
+
+def _serve_cover(filename: Optional[str]) -> Response:
+    path = covers.path_for(filename)
+    if path is None:
+        return Response(status_code=404)
+    return FileResponse(
+        path,
+        media_type=covers.content_type_for(path.name),
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 def _as_year(value: str) -> Optional[int]:
@@ -285,6 +353,72 @@ async def start_journey(request: Request, session: Session = Depends(db.get_sess
 
 
 # ---------------------------------------------------------------------------
+# Cover der Zeitreise-Playlist
+# ---------------------------------------------------------------------------
+
+
+@app.post("/cover/timemachine")
+async def timemachine_cover_upload(
+    request: Request,
+    cover: UploadFile = File(...),
+    session: Session = Depends(db.get_session),
+):
+    users, _ = load_users()
+    user_id = resolve_user(request, users)
+    if not user_id:
+        return _cover_redirect("/", error="Kein Nutzer gewählt.")
+
+    state = db.get_or_create_user_state(session, user_id)
+    filename, error = _store_cover(covers.timemachine_stem(user_id), await _read_cover(cover))
+    if error:
+        return _cover_redirect("/", error=error)
+
+    state.cover_path = filename
+    state.cover_applied_at = None
+    session.add(state)
+    session.commit()
+
+    status = await run_in_threadpool(
+        _push_cover_quietly, user_id, state.target_playlist_name, filename
+    )
+    if status == "uebertragen":
+        state.cover_applied_at = db.utcnow()
+        session.add(state)
+        session.commit()
+    return _cover_redirect("/", status=status)
+
+
+@app.post("/cover/timemachine/delete")
+async def timemachine_cover_delete(
+    request: Request, session: Session = Depends(db.get_session)
+):
+    users, _ = load_users()
+    user_id = resolve_user(request, users)
+    if not user_id:
+        return _cover_redirect("/")
+
+    state = db.get_or_create_user_state(session, user_id)
+    covers.remove(covers.timemachine_stem(user_id))
+    state.cover_path = None
+    state.cover_applied_at = None
+    session.add(state)
+    session.commit()
+    await run_in_threadpool(_clear_cover_quietly, user_id, state.target_playlist_name)
+    return _cover_redirect("/", status="entfernt")
+
+
+@app.get("/cover/timemachine/image")
+async def timemachine_cover_image(
+    request: Request, session: Session = Depends(db.get_session)
+):
+    users, _ = load_users()
+    user_id = resolve_user(request, users)
+    if not user_id:
+        return Response(status_code=404)
+    return _serve_cover(db.get_or_create_user_state(session, user_id).cover_path)
+
+
+# ---------------------------------------------------------------------------
 # Almanach
 # ---------------------------------------------------------------------------
 
@@ -458,6 +592,67 @@ async def almanach_sync(
             "status_title_error": "Almanach nicht erstellt",
         },
     )
+
+
+# --- Cover der Almanach-Playlist -----------------------------------------
+
+
+@app.post("/almanach/{almanach_id}/cover")
+async def almanach_cover_upload(
+    request: Request,
+    almanach_id: int,
+    cover: UploadFile = File(...),
+    session: Session = Depends(db.get_session),
+):
+    almanach = _require_almanach(request, session, almanach_id)
+    target = f"/almanach/{almanach_id}"
+
+    filename, error = _store_cover(
+        covers.almanach_stem(almanach.id), await _read_cover(cover)
+    )
+    if error:
+        return _cover_redirect(target, error=error)
+
+    almanach.cover_path = filename
+    almanach.cover_applied_at = None
+    session.add(almanach)
+    session.commit()
+
+    status = await run_in_threadpool(
+        _push_cover_quietly,
+        almanach.plex_user_id,
+        almanach.target_playlist_name,
+        filename,
+    )
+    if status == "uebertragen":
+        almanach.cover_applied_at = db.utcnow()
+        session.add(almanach)
+        session.commit()
+    return _cover_redirect(target, status=status)
+
+
+@app.post("/almanach/{almanach_id}/cover/delete")
+async def almanach_cover_delete(
+    request: Request, almanach_id: int, session: Session = Depends(db.get_session)
+):
+    almanach = _require_almanach(request, session, almanach_id)
+    covers.remove(covers.almanach_stem(almanach.id))
+    almanach.cover_path = None
+    almanach.cover_applied_at = None
+    session.add(almanach)
+    session.commit()
+    await run_in_threadpool(
+        _clear_cover_quietly, almanach.plex_user_id, almanach.target_playlist_name
+    )
+    return _cover_redirect(f"/almanach/{almanach_id}", status="entfernt")
+
+
+@app.get("/almanach/{almanach_id}/cover/image")
+async def almanach_cover_image(
+    request: Request, almanach_id: int, session: Session = Depends(db.get_session)
+):
+    almanach = _require_almanach(request, session, almanach_id)
+    return _serve_cover(almanach.cover_path)
 
 
 # --- Watch-Status zurücksetzen: erst zeigen, dann bestätigen --------------

@@ -34,6 +34,8 @@ gepflegte Playlist** aktualisieren. Keine neue Playlist pro Suche.
   jederzeit erweiterbar und ebenfalls automatisch nachgezogen.
 - **Watch-Status zurücksetzen** – ein Almanach lässt sich komplett auf
   „ungesehen“ setzen, um ihn von vorn zu schauen (zweistufige Rückfrage).
+- **Cover-Bilder** – jede Playlist (Zeitreise wie Almanach) bekommt auf Wunsch
+  ein eigenes Poster in Plex.
 - **Logbuch** – jeder Lauf mit Art, Zeitraum, Auslöser und Trefferzahl.
 
 ## Multi-User und Watched-Status
@@ -99,6 +101,8 @@ Alle Einstellungen kommen aus Umgebungsvariablen mit dem Präfix `PTM_`
 | `PTM_WEBHOOK_DEBOUNCE_SECONDS` | `20` | Sammelfenster für Webhook-Events |
 | `PTM_WEBHOOK_TOKEN` | – | Optionales Geheimnis für `/webhook/plex?token=…` |
 | `PTM_DATABASE_URL` | `sqlite:///./data/plex_time_machine.db` | Speicherort der SQLite-DB |
+| `PTM_COVER_DIR` | `./data/covers` | Ablage der Cover-Bilder |
+| `PTM_COVER_MAX_BYTES` | `5242880` | Größtes erlaubtes Cover (5 MB) |
 | `PTM_PREVIEW_LIMIT` | `400` | Maximale Zeilen in der Vorschau (`0` = unbegrenzt) |
 
 Die Playlist enthält immer **alle** Treffer – das Limit betrifft nur die Anzeige.
@@ -161,6 +165,22 @@ Zwei bewusste Festlegungen:
 - **Einträge, die aus der Bibliothek verschwinden**, werden beim Bauen
   übersprungen und im Ergebnis benannt, statt den ganzen Lauf abzubrechen.
 
+### Cover für die Playlists
+
+Sowohl die Zeitreise-Playlist (im Cockpit) als auch jeder Almanach haben einen
+Abschnitt **Cover der Playlist**: Bild auswählen, „Cover setzen“ – fertig. Das
+Bild wird als Poster an Plex übertragen und taucht dort überall auf, wo die
+Playlist erscheint.
+
+- Unterstützt werden JPEG, PNG, GIF und WebP bis 5 MB. Geprüft wird der
+  Dateiinhalt, nicht die Endung; Plex stellt Poster hochkant (2:3) am besten dar.
+- Das Bild wird lokal unter `PTM_COVER_DIR` abgelegt und **automatisch erneut
+  übertragen**, wenn Plex die Playlist zwischendurch verwirft – das passiert,
+  sobald alles gesehen ist und der nächste Lauf sie neu anlegt.
+- Existiert die Playlist noch nicht, wird das Cover gemerkt und beim ersten Bau
+  gesetzt.
+- „Cover entfernen“ löscht die Datei und auch das Poster in Plex.
+
 ### Watch-Status zurücksetzen
 
 Am Ende jedes Almanachs steht die **Gefahrenzone** mit „Watch-Status
@@ -208,6 +228,7 @@ app/
 ├── main.py          FastAPI: Seiten, htmx-Fragmente, Webhook, Thumb-Proxy
 ├── almanach.py      Titelsuche, Sammlungen, Release-Order-Playlist, Reset
 ├── config.py        Settings aus Env-Variablen
+├── covers.py        Cover-Bilder prüfen, ablegen, wiederfinden
 ├── formatting.py    Deutsche Datumsformate, Wochentage, Wochenrechnung
 ├── db.py            SQLModel/SQLite: UserState, BlacklistEntry, JourneyLog
 ├── plex_client.py   plexapi-Wrapper inkl. Home-User-Impersonation
@@ -244,6 +265,9 @@ ein Webhook-Event.
 | `GET` | `/almanach/{id}/search`, `/almanach/{id}/preview` | Trefferliste, Vorschau in Release-Order |
 | `POST` | `/almanach/{id}/add`, `/almanach/{id}/remove` | Bestand pflegen |
 | `POST` | `/almanach/{id}/sync` | Playlist der Sammlung schreiben |
+| `POST` | `/almanach/{id}/cover`, `/almanach/{id}/cover/delete` | Cover setzen bzw. entfernen |
+| `GET` | `/almanach/{id}/cover/image` | Cover ausliefern (für die Vorschau) |
+| `POST` | `/cover/timemachine`, `/cover/timemachine/delete` | Cover der Zeitreise-Playlist |
 | `GET`/`POST` | `/almanach/{id}/reset` | Watch-Status zurücksetzen (Rückfrage / Ausführung) |
 | `GET` | `/blacklist`, `/logbook` | Blacklist-Verwaltung, Reise-Logbuch |
 | `POST` | `/period` | Zeitraum speichern, Vorschau-Fragment zurückgeben |
@@ -265,7 +289,8 @@ pytest -q
 Die Suite deckt Suche, Sortierung, Blacklist-Logik, Playlist-Pflege (inkl.
 Leeren, Nachfüllen in Blöcken und dem Fall, dass Plex eine leer geräumte
 Playlist selbst entfernt), Wochenrechnung und Wochentagsanzeige, den Almanach
-(Titelsuche, Serien-Auflösung, Release-Order, fehlende Einträge) sowie
+(Titelsuche, Serien-Auflösung, Release-Order, fehlende Einträge), Cover-Prüfung
+und -Übertragung sowie
 Scheduler-Entprellung und alle HTTP-Endpunkte gegen ein Plex-Double ab –
 ein echter Plex-Server wird dafür nicht gebraucht.
 

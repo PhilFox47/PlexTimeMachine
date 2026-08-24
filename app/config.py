@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     # --- Persistenz / UI --------------------------------------------------
     database_url: str = "sqlite:///./data/plex_time_machine.db"
     preview_limit: int = 400
+    cover_dir: str = "./data/covers"
+    cover_max_bytes: int = 5 * 1024 * 1024
 
     @property
     def configured(self) -> bool:

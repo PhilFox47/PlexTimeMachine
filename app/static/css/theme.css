@@ -543,6 +543,73 @@ tbody tr:hover { background: rgba(41, 215, 200, 0.05); }
   box-shadow: none;
 }
 
+/* --- Cover -------------------------------------------------------------- */
+
+.cover-box {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  align-items: flex-start;
+}
+
+.cover-preview,
+.cover-empty {
+  width: 110px;
+  height: 165px;
+  border-radius: var(--radius);
+  flex: none;
+}
+
+.cover-preview {
+  object-fit: cover;
+  border: 1px solid var(--amber-dim);
+  box-shadow: var(--glow-amber);
+}
+
+.cover-empty {
+  border: 1px dashed var(--border);
+  display: grid;
+  place-items: center;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.cover-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 260px;
+}
+
+.cover-actions form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+.cover-actions input[type="file"] {
+  color: var(--text-dim);
+  font-family: var(--font-body);
+  font-size: 12px;
+  max-width: 100%;
+}
+
+.cover-actions input[type="file"]::file-selector-button {
+  background: var(--bg-panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 12px;
+  padding: 7px 12px;
+  margin-right: 10px;
+  cursor: pointer;
+}
+
+.cover-actions input[type="file"]::file-selector-button:hover {
+  border-color: var(--teal-dim);
+  color: var(--teal);
+}
+
 /* --- Blacklist / Logbuch ------------------------------------------------ */
 
 .inline-form { display: inline; }

@@ -73,6 +73,19 @@
 </section>
 
 <section class="panel">
+  <h2>Cover der Playlist</h2>
+
+  {% include "partials/cover_notice.html" %}
+
+  {% with has_cover = state and state.cover_path,
+          cover_url = "/cover/timemachine/image",
+          upload_action = "/cover/timemachine",
+          delete_action = "/cover/timemachine/delete" %}
+    {% include "partials/cover.html" %}
+  {% endwith %}
+</section>
+
+<section class="panel">
   <h2>Abflug</h2>
 
   <div id="status">

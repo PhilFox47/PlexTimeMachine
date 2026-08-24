@@ -7,8 +7,9 @@ services:
     env_file:
       - .env
     environment:
-      # Innerhalb des Containers liegt die Datenbank immer im Volume.
+      # Innerhalb des Containers liegen Datenbank und Cover immer im Volume.
       PTM_DATABASE_URL: sqlite:////app/data/plex_time_machine.db
+      PTM_COVER_DIR: /app/data/covers
     ports:
       - "8088:8080"
     volumes:

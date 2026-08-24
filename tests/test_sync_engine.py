@@ -128,7 +128,7 @@ def test_preview_reports_plex_errors(session):
 def test_apply_playlist_creates_when_missing(gateway):
     items = [i.plex_object for i in collect_items(gateway, gateway.server, ERA_START, ERA_END)]
 
-    assert apply_playlist(gateway.server, "PTM – Alex", items) is True
+    assert apply_playlist(gateway.server, "PTM – Alex", items).exists is True
     playlist = gateway.server.playlists()[0]
     assert playlist.title == "PTM – Alex"
     assert playlist.items() == items
@@ -150,7 +150,7 @@ def test_apply_playlist_clears_and_refills_same_playlist(gateway):
 def test_apply_playlist_deletes_playlist_when_no_matches(gateway):
     gateway.server.createPlaylist("PTM – Alex", items=[FakeMovie(99, "Alt", "1970-01-01")])
 
-    assert apply_playlist(gateway.server, "PTM – Alex", []) is False
+    assert apply_playlist(gateway.server, "PTM – Alex", []).exists is False
     assert gateway.server.playlists() == []
 
 
@@ -181,7 +181,7 @@ def test_apply_playlist_survives_plex_dropping_empty_playlist(gateway):
     gateway.server._playlists.append(SelfDeletingPlaylist(gateway.server))
     items = [FakeMovie(1, "Neu", "1985-05-05")]
 
-    assert apply_playlist(gateway.server, "PTM – Alex", items) is True
+    assert apply_playlist(gateway.server, "PTM – Alex", items).exists is True
     assert gateway.server.playlists()[0].items() == items
 
 
