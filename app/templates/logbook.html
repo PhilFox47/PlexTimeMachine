@@ -12,19 +12,21 @@
   <div class="table-wrap">
     <table>
       <thead>
-        <tr><th>Ausgeführt</th><th>Zeitraum</th><th>Titel</th><th>Auslöser</th><th>Notiz</th></tr>
+        <tr><th>Ausgeführt</th><th>Art</th><th>Zeitraum</th><th>Titel</th><th>Auslöser</th><th>Notiz</th></tr>
       </thead>
       <tbody>
       {% for journey in journeys %}
         <tr>
           <td class="cell-date">{{ journey.executed_at|de_datetime }}</td>
+          <td><span class="badge {{ 'movie' if journey.kind == 'almanach' else 'episode' }}">
+            {{ 'Almanach' if journey.kind == 'almanach' else 'Zeitreise' }}</span></td>
           <td class="mono">
             {% if journey.date_start and journey.date_end %}
               {{ (journey.date_start, journey.date_end)|de_period }}
-            {% else %}—{% endif %}
+            {% else %}<span class="cell-sub">nach Auswahl</span>{% endif %}
           </td>
           <td class="cell-title">{{ journey.item_count }}</td>
-          <td><span class="badge {{ 'movie' if journey.trigger == 'manual' else 'episode' }}">{{ journey.trigger }}</span></td>
+          <td class="cell-sub">{{ journey.trigger }}</td>
           <td class="cell-sub">{{ journey.note or '—' }}</td>
         </tr>
       {% endfor %}

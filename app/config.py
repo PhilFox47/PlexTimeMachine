@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     movie_library: str = "Filme"
     tv_library: str = "Serien"
     playlist_name_template: str = "Plex Time Machine – {user}"
+    almanach_playlist_name_template: str = "Plex Almanach – {user}"
 
     # --- Automatisierung --------------------------------------------------
     poll_interval_minutes: int = 30
@@ -38,6 +39,9 @@ class Settings(BaseSettings):
 
     def playlist_name_for(self, user: str) -> str:
         return self.playlist_name_template.format(user=user)
+
+    def almanach_playlist_name_for(self, user: str) -> str:
+        return self.almanach_playlist_name_template.format(user=user)
 
 
 @lru_cache

@@ -464,6 +464,66 @@ tbody tr:hover { background: rgba(41, 215, 200, 0.05); }
   .flux-bar, .flux-text { animation: none; }
 }
 
+/* --- Almanach ----------------------------------------------------------- */
+
+/* Buchhafter Rahmen für den Bestand – Anmutung eines gebundenen Almanachs. */
+.panel.book {
+  border-color: var(--amber-dim);
+  box-shadow: inset 0 0 0 4px rgba(255, 176, 32, 0.06);
+}
+
+.panel.book::before {
+  background: linear-gradient(90deg, var(--amber-dim), var(--amber), var(--amber-dim));
+}
+
+.search-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.search-bar input[type="search"] {
+  flex: 1 1 260px;
+  background: #07090c;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--amber);
+  font-family: var(--font-digit);
+  font-size: 17px;
+  letter-spacing: 0.06em;
+  padding: 11px 14px;
+}
+
+.search-bar input[type="search"]::placeholder { color: var(--text-dim); opacity: 0.7; }
+
+.search-bar input[type="search"]:focus {
+  outline: none;
+  border-color: var(--amber-dim);
+  box-shadow: var(--glow-amber);
+}
+
+.btn-add {
+  background: rgba(41, 215, 200, 0.08);
+  border: 1px solid var(--teal-dim);
+  color: var(--teal);
+  font-size: 17px;
+  line-height: 1;
+  padding: 4px 13px;
+  min-width: 42px;
+}
+
+.btn-add:hover { background: rgba(41, 215, 200, 0.2); box-shadow: var(--glow-teal); }
+
+.btn-add:disabled {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text-dim);
+  cursor: default;
+  box-shadow: none;
+}
+
 /* --- Blacklist / Logbuch ------------------------------------------------ */
 
 .inline-form { display: inline; }

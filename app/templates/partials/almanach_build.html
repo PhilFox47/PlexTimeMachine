@@ -1,0 +1,9 @@
+{# Auslöse-Knopf. Wird beim Bestandswechsel per Out-of-band-Swap mit
+   aktualisiert, damit er nie fälschlich deaktiviert stehen bleibt. #}
+<form id="almanach-build" {% if oob %}hx-swap-oob="true"{% endif %}
+      hx-post="/almanach/sync" hx-target="#almanach-status" hx-swap="innerHTML"
+      hx-indicator="#build-flux" hx-disabled-elt="find button">
+  <button class="btn-launch" type="submit" {% if not almanach %}disabled{% endif %}>
+    Almanach erstellen
+  </button>
+</form>

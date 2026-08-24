@@ -29,7 +29,10 @@ gepflegte Playlist** aktualisieren. Keine neue Playlist pro Suche.
   jeweiligen Home-Users (siehe [Multi-User](#multi-user-und-watched-status)).
 - **Automatisches Nachziehen** – periodisches Polling plus optionaler
   Plex-Webhook, damit gesehene Titel zeitnah aus der Playlist fallen.
-- **Logbuch** – jede ausgeführte Zeitreise mit Zeitraum, Auslöser und Trefferzahl.
+- **Almanach** – gezielt gesuchte Serien und Filme (z. B. ein ganzes Franchise) als
+  zweite Playlist in Release-Order, ebenfalls nur ungesehen und automatisch
+  nachgezogen.
+- **Logbuch** – jeder Lauf mit Art, Zeitraum, Auslöser und Trefferzahl.
 
 ## Multi-User und Watched-Status
 
@@ -42,6 +45,9 @@ eine dauerhafte Playlist:
 Plex Time Machine – Alex
 Plex Time Machine – Nina
 ```
+
+Für den Almanach gilt dasselbe – jede Person bekommt zusätzlich
+`Plex Almanach – <Name>`.
 
 Der Admin-Token holt sich für jeden Home-User über plex.tv einen
 server-spezifischen Token (`MyPlexUser.get_token`). Suche *und* Playlist laufen
@@ -86,6 +92,7 @@ Alle Einstellungen kommen aus Umgebungsvariablen mit dem Präfix `PTM_`
 | `PTM_MOVIE_LIBRARY` | `Filme` | Name der Film-Bibliothek |
 | `PTM_TV_LIBRARY` | `Serien` | Name der Serien-Bibliothek |
 | `PTM_PLAYLIST_NAME_TEMPLATE` | `Plex Time Machine – {user}` | `{user}` wird durch den Home-User ersetzt |
+| `PTM_ALMANACH_PLAYLIST_NAME_TEMPLATE` | `Plex Almanach – {user}` | Name der Almanach-Playlist |
 | `PTM_POLL_INTERVAL_MINUTES` | `30` | Periodisches Nachziehen; `0` schaltet es ab |
 | `PTM_WEBHOOK_DEBOUNCE_SECONDS` | `20` | Sammelfenster für Webhook-Events |
 | `PTM_WEBHOOK_TOKEN` | – | Optionales Geheimnis für `/webhook/plex?token=…` |
@@ -118,6 +125,33 @@ periodische Polling da.
 4. **Reisender** – der Umschalter oben wechselt den Home-User-Kontext
    (Vorschau, Blacklist, Playlist und Logbuch sind pro Nutzer getrennt).
 
+### Almanach: Serien und Filme gezielt sammeln
+
+Der Reiter **Almanach** ist die zweite Betriebsart – statt eines Zeitraums
+stellst du hier eine Liste zusammen:
+
+1. **Suchen** – Titel oder Teil davon eingeben (z. B. `Star Wars`); gefunden
+   wird alles aus Film- und Serienbibliothek, dessen Name den Begriff enthält.
+   Die Trefferliste lädt schon beim Tippen.
+2. **Aufnehmen** – das `+` legt Serie oder Film in den Bestand. Bei Serien zählt
+   die ganze Serie, nicht die einzelne Episode.
+3. **Vorschau anzeigen** – zeigt, was in der Playlist landen würde: alle
+   ungesehenen Episoden der gewählten Serien plus die gewählten Filme, streng
+   nach Erscheinungsdatum sortiert (Release Order).
+4. **Almanach erstellen** – schreibt das Ergebnis in `Plex Almanach – <Name>`.
+
+Der Bestand bleibt dauerhaft gespeichert. Polling und Webhook ziehen die
+Almanach-Playlist genauso nach wie die Zeitreise-Playlist – gesehene Folgen
+fallen also von selbst heraus, und neu hinzugekommene Episoden einer
+gesammelten Serie kommen automatisch dazu.
+
+Zwei bewusste Festlegungen:
+
+- **Die Blacklist gilt hier nicht.** Wer eine Serie ausdrücklich in den Almanach
+  legt, will sie sehen – die ausdrückliche Auswahl sticht.
+- **Einträge, die aus der Bibliothek verschwinden**, werden beim Bauen
+  übersprungen und im Ergebnis benannt, statt den ganzen Lauf abzubrechen.
+
 ### Wochenweise durch die Zeit
 
 Für den typischen Ablauf „eine Woche nach der anderen“ gibt es drei Knöpfe:
@@ -144,6 +178,7 @@ Wochenschritte übernehmen diesen Zuschnitt dann unverändert.
 ```
 app/
 ├── main.py          FastAPI: Seiten, htmx-Fragmente, Webhook, Thumb-Proxy
+├── almanach.py      Titelsuche, Bestand, Release-Order-Playlist
 ├── config.py        Settings aus Env-Variablen
 ├── formatting.py    Deutsche Datumsformate, Wochentage, Wochenrechnung
 ├── db.py            SQLModel/SQLite: UserState, BlacklistEntry, JourneyLog
@@ -174,6 +209,10 @@ ein Webhook-Event.
 | Methode | Pfad | Zweck |
 |---|---|---|
 | `GET` | `/` | Cockpit mit Zeit-Display und Vorschau |
+| `GET` | `/almanach` | Almanach: Suche, Bestand, Ausgabe |
+| `GET` | `/almanach/search`, `/almanach/preview` | Trefferliste, Vorschau in Release-Order |
+| `POST` | `/almanach/add`, `/almanach/remove` | Bestand pflegen |
+| `POST` | `/almanach/sync` | Almanach-Playlist schreiben |
 | `GET` | `/blacklist`, `/logbook` | Blacklist-Verwaltung, Reise-Logbuch |
 | `POST` | `/period` | Zeitraum speichern, Vorschau-Fragment zurückgeben |
 | `GET` | `/preview` | Vorschau-Fragment ohne Speichern |
@@ -193,9 +232,13 @@ pytest -q
 
 Die Suite deckt Suche, Sortierung, Blacklist-Logik, Playlist-Pflege (inkl.
 Leeren, Nachfüllen in Blöcken und dem Fall, dass Plex eine leer geräumte
-Playlist selbst entfernt), Wochenrechnung und Wochentagsanzeige,
+Playlist selbst entfernt), Wochenrechnung und Wochentagsanzeige, den Almanach
+(Titelsuche, Serien-Auflösung, Release-Order, fehlende Einträge) sowie
 Scheduler-Entprellung und alle HTTP-Endpunkte gegen ein Plex-Double ab –
 ein echter Plex-Server wird dafür nicht gebraucht.
+
+Bestehende Datenbanken werden beim Start automatisch um neue Spalten ergänzt;
+ein Update kostet also keine Blacklist- oder Logbuch-Einträge.
 
 ## Sicherheitshinweis
 
@@ -207,5 +250,6 @@ Authentifizierung davorsetzen und `PTM_WEBHOOK_TOKEN` setzen.
 
 - Friends-Accounts (eigener Plex-Login) statt nur Home-User
 - Blacklist auf Episoden-Ebene statt nur ganze Serien/Filme
+- Almanach: mehrere benannte Sammlungen statt einer pro Nutzer
 - Historie zuletzt genutzter Zeiträume als Schnellauswahl
   (aktuell wird nur der jeweils letzte Zeitraum gemerkt)

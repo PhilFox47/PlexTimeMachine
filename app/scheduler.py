@@ -12,6 +12,7 @@ from sqlmodel import Session
 
 from app import db
 from app.config import Settings, get_settings
+from app.almanach import sync_all_almanachs
 from app.sync_engine import sync_all_users
 
 log = logging.getLogger(__name__)
@@ -21,9 +22,14 @@ WEBHOOK_JOB_ID = "ptm-webhook"
 
 
 def run_sync_all(trigger: str) -> None:
-    """Blockierender Sync aller Nutzer – läuft im Worker-Thread."""
+    """Blockierender Sync aller Nutzer – läuft im Worker-Thread.
+
+    Zieht beide Playlist-Arten nach: die Zeitreise-Playlist jedes Nutzers mit
+    gesetztem Zeitraum und die Almanach-Playlist jedes Nutzers mit Auswahl.
+    """
     with Session(db.get_engine()) as session:
-        results = sync_all_users(session, trigger=trigger)
+        results = list(sync_all_users(session, trigger=trigger))
+        results += sync_all_almanachs(session, trigger=trigger)
     for result in results:
         if result.ok:
             log.info(

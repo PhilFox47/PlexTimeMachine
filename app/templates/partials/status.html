@@ -1,11 +1,14 @@
-{# Ergebnis der Zeitreise #}
+{# Ergebnis eines Playlist-Laufs. Die Überschrift kommt vom Aufrufer,
+   damit dasselbe Fragment für Zeitreise und Almanach passt. #}
+{% set done = status_title_ok | default('Zeitreise abgeschlossen') %}
+{% set failed = status_title_error | default('Zeitreise abgebrochen') %}
 {% if status is none %}
 {% elif status.ok %}
   <div class="notice ok">
-    <strong>Zeitreise abgeschlossen.</strong> {{ status.message }}
+    <strong>{{ done }}.</strong> {{ status.message }}
   </div>
 {% else %}
   <div class="notice error">
-    <strong>Zeitreise abgebrochen.</strong> {{ status.error }}
+    <strong>{{ failed }}.</strong> {{ status.error }}
   </div>
 {% endif %}

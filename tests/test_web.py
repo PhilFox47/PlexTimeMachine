@@ -249,3 +249,113 @@ def test_blacklist_page_shows_weekday(client, session):
 
     assert entry.added_at.strftime("%d.%m.%Y") in body
     assert any(day in body for day in ("Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"))
+
+
+# ---------------------------------------------------------------------------
+# Almanach
+# ---------------------------------------------------------------------------
+
+
+def test_almanach_page_offers_search_and_empty_stock(client):
+    body = client.get("/almanach").text
+
+    assert 'name="q"' in body and "Archiv durchsuchen" in body
+    assert "Noch nichts aufgenommen" in body
+    assert 'href="/almanach"' in body  # Reiter in der Navigation
+
+
+def test_almanach_search_lists_hits_with_add_button(client):
+    body = client.get("/almanach/search", params={"q": "rider"}).text
+
+    assert "Knight Rider" in body
+    assert 'hx-post="/almanach/add"' in body
+    assert "2 Episoden" in body
+
+
+def test_almanach_search_without_query_stays_quiet(client):
+    assert client.get("/almanach/search", params={"q": ""}).text.strip() == ""
+
+
+def test_almanach_add_and_remove_update_the_stock(client, session):
+    added = client.post(
+        "/almanach/add",
+        data={"rating_key": "100", "media_type": "show", "title": "Knight Rider", "year": "1982"},
+    )
+
+    assert "Knight Rider" in added.text and "Serie" in added.text
+    entry = db.list_almanach(session, "Alex")[0]
+    assert entry.plex_rating_key == "100" and entry.year == 1982
+
+    removed = client.post("/almanach/remove", data={"rating_key": "100"})
+
+    assert "Noch nichts aufgenommen" in removed.text
+    assert db.list_almanach(session, "Alex") == []
+
+
+def test_almanach_add_is_idempotent(client, session):
+    for _ in range(2):
+        client.post(
+            "/almanach/add",
+            data={"rating_key": "100", "media_type": "show", "title": "Knight Rider"},
+        )
+
+    assert len(db.list_almanach(session, "Alex")) == 1
+
+
+def test_almanach_preview_shows_release_order(client, session):
+    db.add_to_almanach(session, "Alex", "100", "show", "Knight Rider")
+    db.add_to_almanach(session, "Alex", "1", "movie", "Zurück in die Zukunft")
+
+    body = client.get("/almanach/preview").text
+
+    # Film vom 03.07.1985 steht vor den Episoden vom 20.09.1985
+    assert body.index("Zurück in die Zukunft") < body.index("Pilot")
+    assert "Mi 03.07.1985" in body
+
+
+def test_almanach_sync_builds_playlist(client, session, gateway):
+    db.add_to_almanach(session, "Alex", "100", "show", "Knight Rider")
+
+    response = client.post("/almanach/sync")
+
+    assert "Almanach erstellt" in response.text
+    assert "Plex Almanach – Alex" in response.text
+    playlist = gateway.server.playlists()[0]
+    assert playlist.title == "Plex Almanach – Alex" and len(playlist.items()) == 2
+
+
+def test_almanach_sync_without_entries_reports_error(client):
+    response = client.post("/almanach/sync")
+
+    assert "Almanach nicht erstellt" in response.text and "leer" in response.text
+
+
+def test_logbook_separates_almanach_from_time_machine(client, session):
+    import datetime
+
+    db.set_period(session, "Alex", datetime.date(1985, 1, 1), datetime.date(1985, 12, 31))
+    client.post("/sync")
+    db.add_to_almanach(session, "Alex", "100", "show", "Knight Rider")
+    client.post("/almanach/sync")
+
+    body = client.get("/logbook").text
+
+    assert "Almanach" in body and "Zeitreise" in body
+    assert "nach Auswahl" in body  # Almanach-Zeile ohne Zeitraum
+
+
+def test_stock_update_carries_the_build_button_state(client, session):
+    """Der Auslöse-Knopf darf nach dem ersten Eintrag nicht deaktiviert bleiben."""
+    empty = client.get("/almanach").text
+    assert "<button class=\"btn-launch\" type=\"submit\" disabled>" in empty
+
+    added = client.post(
+        "/almanach/add",
+        data={"rating_key": "100", "media_type": "show", "title": "Knight Rider"},
+    ).text
+
+    assert 'hx-swap-oob="true"' in added  # Knopf reist per Out-of-band-Swap mit
+    assert "<button class=\"btn-launch\" type=\"submit\" >" in added
+
+    removed = client.post("/almanach/remove", data={"rating_key": "100"}).text
+    assert "<button class=\"btn-launch\" type=\"submit\" disabled>" in removed

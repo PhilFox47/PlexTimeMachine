@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% set page = 'almanach' %}
+{% block title %}Almanach · Plex Time Machine{% endblock %}
+
+{% block content %}
+
+<section class="panel">
+  <h2>Archiv durchsuchen</h2>
+
+  <p class="cell-sub" style="margin-top:0">
+    Titel oder Teil davon eingeben – gefunden wird alles in Film- und
+    Serienbibliothek, dessen Name den Suchbegriff enthält.
+  </p>
+
+  {# Ziel, Swap und Indikator erbt das Eingabefeld vom Formular; es feuert
+     zusätzlich beim Tippen, das Formular beim Absenden. #}
+  <form class="search-bar"
+        hx-get="/almanach/search"
+        hx-target="#search-results"
+        hx-swap="innerHTML"
+        hx-indicator="#search-flux"
+        hx-trigger="submit">
+    <input type="search" id="q" name="q" autocomplete="off"
+           placeholder="z. B. Star Wars" aria-label="Suchbegriff"
+           hx-get="/almanach/search"
+           hx-trigger="keyup changed delay:400ms, search">
+    <button class="btn" type="submit">Suchen</button>
+  </form>
+
+  <div id="search-flux" class="flux">
+    <div class="flux-bar"></div>
+    <div class="flux-text">Durchsuche das Archiv …</div>
+  </div>
+
+  <div id="search-results"></div>
+</section>
+
+<section class="panel book">
+  <h2>Almanach-Bestand</h2>
+
+  <div id="almanach-stock">
+    {% include "partials/almanach_stock.html" %}
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Ausgabe</h2>
+
+  <div class="week-nav" style="margin-top:0; padding-top:0; border-top:0">
+    <span class="nav-label">Release Order</span>
+    <button class="btn-week" type="button"
+            hx-get="/almanach/preview"
+            hx-target="#almanach-preview"
+            hx-swap="innerHTML"
+            hx-indicator="#preview-flux">Vorschau anzeigen</button>
+  </div>
+
+  <div id="preview-flux" class="flux">
+    <div class="flux-bar"></div>
+    <div class="flux-text">Sortiere nach Erscheinungsdatum …</div>
+  </div>
+
+  <div id="almanach-preview"></div>
+
+  <div id="almanach-status"></div>
+
+  {% include "partials/almanach_build.html" %}
+
+  <div id="build-flux" class="flux">
+    <div class="flux-bar"></div>
+    <div class="flux-text">Binde den Almanach …</div>
+  </div>
+
+  <p class="cell-sub" style="margin-bottom:0">
+    Schreibt alle ungesehenen Titel des Bestands nach Erscheinungsdatum sortiert
+    in die feste Playlist
+    {%- if almanach_state and almanach_state.target_playlist_name %}
+      »{{ almanach_state.target_playlist_name }}«{% endif %}.
+    Der Bestand bleibt erhalten – die Playlist wird beim Polling und nach
+    Webhook-Ereignissen automatisch nachgezogen.
+  </p>
+</section>
+{% endblock %}

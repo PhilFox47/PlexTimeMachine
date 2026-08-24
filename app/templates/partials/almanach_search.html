@@ -1,0 +1,51 @@
+{# Trefferliste der Titelsuche #}
+{% if search is none or not search.query %}
+{% elif not search.ok %}
+  <div class="notice error">{{ search.error }}</div>
+{% elif not search.hits %}
+  <div class="empty">Nichts gefunden für »{{ search.query }}«.</div>
+{% else %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th></th><th>Titel</th><th>Jahr</th><th>Typ</th><th>Umfang</th><th></th></tr>
+      </thead>
+      <tbody>
+      {% for hit in search.hits %}
+        <tr>
+          <td>
+            {% if hit.thumb %}
+              <img class="poster" loading="lazy" alt="" src="/thumb?path={{ hit.thumb|urlencode }}">
+            {% else %}
+              <div class="poster-fallback">?</div>
+            {% endif %}
+          </td>
+          <td class="cell-title">{{ hit.title }}</td>
+          <td class="cell-sub">{{ hit.year or '—' }}</td>
+          <td><span class="badge {{ 'episode' if hit.is_show else 'movie' }}">
+            {{ 'Serie' if hit.is_show else 'Film' }}</span></td>
+          <td class="cell-sub">
+            {%- if hit.is_show and hit.episode_count %}{{ hit.episode_count }} Episoden
+            {%- elif hit.is_show %}Serie{% else %}Film{% endif %}
+          </td>
+          <td class="list-actions">
+            <button class="btn-add"
+                    title="In den Almanach aufnehmen"
+                    hx-post="/almanach/add"
+                    hx-target="#almanach-stock"
+                    hx-swap="innerHTML"
+                    hx-vals='{{ {"rating_key": hit.rating_key, "media_type": hit.media_type, "title": hit.title, "year": hit.year|string if hit.year else ""}|tojson }}'
+                    hx-on::after-request="this.textContent='✓'; this.disabled=true"
+                    {% if hit.already_added %}disabled{% endif %}>
+              {{ '✓' if hit.already_added else '+' }}
+            </button>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if search.truncated %}
+    <div class="notice muted">Weitere Treffer ausgeblendet – Suchbegriff verfeinern.</div>
+  {% endif %}
+{% endif %}

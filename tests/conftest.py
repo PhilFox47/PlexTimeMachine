@@ -89,19 +89,64 @@ class FakeEpisode:
         return f"<Episode {self.grandparentTitle} {self.title}>"
 
 
+class FakeShow:
+    type = "show"
+
+    def __init__(self, rating_key: int, title: str, year: int, episodes: list["FakeEpisode"]):
+        self.ratingKey = rating_key
+        self.title = title
+        self.year = year
+        self.thumb = f"/library/metadata/{rating_key}/thumb/1"
+        self._episodes = episodes
+        self.leafCount = len(episodes)
+
+    def episodes(self) -> list["FakeEpisode"]:
+        return list(self._episodes)
+
+    def unwatched(self) -> list["FakeEpisode"]:
+        return [e for e in self._episodes if not getattr(e, "viewCount", 0)]
+
+    def __repr__(self) -> str:  # pragma: no cover - nur für Testausgabe
+        return f"<Show {self.title}>"
+
+
 class FakeSection:
-    def __init__(self, title: str, type_: str, items: list[Any], fail_filters: bool = False):
+    def __init__(
+        self,
+        title: str,
+        type_: str,
+        items: list[Any],
+        fail_filters: bool = False,
+        shows: list[FakeShow] | None = None,
+    ):
         self.title = title
         self.type = type_
         self._items = items
+        self.shows = shows or []
         self.fail_filters = fail_filters
         self.calls: list[dict] = []
 
-    def search(self, libtype: str | None = None, filters: dict | None = None, **kwargs):
-        self.calls.append({"libtype": libtype, "filters": filters, "kwargs": kwargs})
+    def search(
+        self,
+        title: str | None = None,
+        libtype: str | None = None,
+        filters: dict | None = None,
+        maxresults: int | None = None,
+        **kwargs,
+    ):
+        self.calls.append(
+            {"title": title, "libtype": libtype, "filters": filters, "kwargs": kwargs}
+        )
         if filters and self.fail_filters:
             raise RuntimeError("Unsupported filter field")
-        return [i for i in self._items if libtype is None or i.type == libtype]
+        found = [i for i in self._searchable() if libtype is None or i.type == libtype]
+        if title:  # Plex sucht standardmäßig "enthält"
+            found = [i for i in found if title.lower() in i.title.lower()]
+        return found[:maxresults] if maxresults else found
+
+    def _searchable(self):
+        """Serien-Sektionen liefern je nach libtype Serien oder Episoden."""
+        return list(self._items) + list(self.shows)
 
 
 class FakePlaylist:
@@ -127,11 +172,31 @@ class FakePlaylist:
 
 
 class FakeServer:
-    def __init__(self, movies: list[Any], episodes: list[Any], fail_filters: bool = False):
+    def __init__(
+        self,
+        movies: list[Any],
+        episodes: list[Any],
+        fail_filters: bool = False,
+        shows: list[FakeShow] | None = None,
+    ):
         self.movie_section = FakeSection("Filme", "movie", movies, fail_filters)
-        self.tv_section = FakeSection("Serien", "show", episodes, fail_filters)
+        self.tv_section = FakeSection("Serien", "show", episodes, fail_filters, shows=shows)
         self._playlists: list[FakePlaylist] = []
         self.created: list[str] = []
+
+    def fetchItem(self, rating_key: int):
+        """Wie PlexServer.fetchItem: Zugriff über den ratingKey."""
+        from plexapi.exceptions import NotFound
+
+        pool = (
+            list(self.movie_section._items)
+            + list(self.tv_section._items)
+            + list(self.tv_section.shows)
+        )
+        for item in pool:
+            if item.ratingKey == rating_key:
+                return item
+        raise NotFound(f"Unknown ratingKey {rating_key}")
 
     def playlists(self) -> list[FakePlaylist]:
         return list(self._playlists)
@@ -183,9 +248,15 @@ def plex_data() -> dict[str, list[Any]]:
         FakeEpisode(12, 100, "Knight Rider", "Folge 2", "1985-09-20", 1, 2),
         FakeEpisode(13, 200, "Das A-Team", "Showdown", "1985-02-22", 3, 5),
     ]
-    return {"movies": movies, "episodes": episodes}
+    shows = [
+        FakeShow(100, "Knight Rider", 1982, [e for e in episodes if e.grandparentRatingKey == 100]),
+        FakeShow(200, "Das A-Team", 1983, [e for e in episodes if e.grandparentRatingKey == 200]),
+    ]
+    return {"movies": movies, "episodes": episodes, "shows": shows}
 
 
 @pytest.fixture
 def gateway(plex_data) -> FakeGateway:
-    return FakeGateway(FakeServer(plex_data["movies"], plex_data["episodes"]))
+    return FakeGateway(
+        FakeServer(plex_data["movies"], plex_data["episodes"], shows=plex_data["shows"])
+    )
