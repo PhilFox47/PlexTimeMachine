@@ -24,6 +24,7 @@ from app.sync_engine import (
     SyncResult,
     apply_cover_after_sync,
     apply_playlist,
+    is_unwatched,
     to_preview_item,
 )
 
@@ -157,12 +158,12 @@ def collect_almanach_items(
 
         if getattr(obj, "type", "") == "show":
             candidates: Sequence[Any] = obj.unwatched()
-        elif getattr(obj, "viewCount", 0):
-            candidates = []  # Film bereits gesehen
         else:
             candidates = [obj]
 
         for candidate in candidates:
+            if not is_unwatched(candidate):
+                continue
             item = to_preview_item(candidate)
             if item is not None:
                 items.append(item)

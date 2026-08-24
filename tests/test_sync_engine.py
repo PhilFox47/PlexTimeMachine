@@ -60,6 +60,40 @@ def test_search_falls_back_when_server_filters_unsupported(plex_data):
     assert server.movie_section.calls[-1]["kwargs"] == {"unwatched": True}
 
 
+def test_search_falls_back_to_an_unfiltered_scan(plex_data, monkeypatch):
+    """Selbst wenn Plex keinen Filter annimmt, bleibt das Ergebnis richtig."""
+    server = FakeServer(plex_data["movies"], plex_data["episodes"])
+
+    def stur(self, title=None, libtype=None, filters=None, maxresults=None, **kwargs):
+        if filters or kwargs:
+            raise RuntimeError("Unknown filter field")
+        return [i for i in self._items if libtype is None or i.type == libtype]
+
+    monkeypatch.setattr(type(server.movie_section), "search", stur)
+    monkeypatch.setattr(type(server.tv_section), "search", stur)
+    plex_data["movies"][1].viewCount = 1  # Brazil gesehen
+    gw = FakeGateway(server)
+
+    items = collect_items(gw, server, ERA_START, ERA_END)
+
+    assert "Brazil" not in [i.title for i in items]      # trotzdem aussortiert
+    assert len(items) == 4
+
+
+def test_watched_items_never_enter_the_playlist(gateway, plex_data):
+    """Der serverseitige Filter wird nicht blind geglaubt."""
+    plex_data["movies"][0].viewCount = 1        # Zurück in die Zukunft gesehen
+    plex_data["episodes"][0].viewCount = 3      # Knight-Rider-Pilot gesehen
+
+    items = collect_items(gateway, gateway.server, ERA_START, ERA_END)
+
+    assert [i.display_title for i in items] == [
+        "Brazil",
+        "Das A-Team – S03E05 Showdown",
+        "Knight Rider – S01E02 Folge 2",
+    ]
+
+
 def test_episode_blacklist_uses_series_key(gateway):
     items = collect_items(gateway, gateway.server, ERA_START, ERA_END)
 

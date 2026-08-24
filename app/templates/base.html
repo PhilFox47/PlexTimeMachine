@@ -53,7 +53,11 @@
     <span>Plex Time Machine v{{ version }}</span>
     {% if state and state.target_playlist_name %}<span>Ziel-Playlist: {{ state.target_playlist_name }}</span>{% endif %}
     {% if settings.poll_interval_minutes %}
-      <span>Polling alle {{ settings.poll_interval_minutes }} min{% if next_poll_at %} · nächster Lauf {{ next_poll_at.strftime('%H:%M') }} UTC{% endif %}</span>
+      <span>
+        Polling alle {{ settings.poll_interval_minutes }} min
+        {%- if last_poll_at %} · zuletzt {{ last_poll_at.strftime('%H:%M') }} UTC{% endif %}
+        {%- if next_poll_at %} · nächster Lauf {{ next_poll_at.strftime('%H:%M') }} UTC{% endif %}
+      </span>
     {% else %}
       <span>Polling deaktiviert</span>
     {% endif %}

@@ -199,20 +199,49 @@ def _in_range(item: PreviewItem, start: date, end: date) -> bool:
     return item.air_date is not None and start <= item.air_date <= end
 
 
+def is_unwatched(obj: Any) -> bool:
+    """Ungesehen heißt: Plex hat für dieses Item keinen Abspielvorgang gezählt.
+
+    Der serverseitige ``unwatched``-Filter wird zwar mitgeschickt, aber nicht
+    blind geglaubt: greift er nicht (ältere Plex-Fassungen, Fallback-Suche),
+    blieben sonst gesehene Titel für immer in der Playlist stehen.
+    """
+    return not getattr(obj, "viewCount", 0)
+
+
 def _search_section(section: Any, start: date, end: date, libtype: str) -> list[Any]:
-    """Serverseitige Suche mit clientseitigem Fallback."""
+    """Suche mit drei Stufen, damit sie auf jeder Plex-Fassung etwas liefert.
+
+    1. Datum und ``unwatched`` serverseitig – schnell und schonend.
+    2. Nur ``unwatched`` – falls Plex die Datumsfilter nicht mag.
+    3. Alles – falls Plex auch damit nichts anfangen kann.
+
+    Eingegrenzt wird anschließend ohnehin clientseitig (Datum *und*
+    Watch-Status), die Stufen sind reine Mengenbegrenzung.
+    """
     filters = dict(_date_filters(start, end))
     filters["unwatched"] = True
-    try:
-        return list(section.search(libtype=libtype, filters=filters))
-    except Exception as exc:
-        log.warning(
-            "Serverseitiger Filter für '%s' fehlgeschlagen (%s) – nutze Fallback",
-            section.title,
-            exc,
-        )
-    # Fallback: nur ungesehene Items holen und lokal nach Datum filtern.
-    return list(section.search(libtype=libtype, unwatched=True))
+    versuche = (
+        ("Datum + ungesehen", lambda: section.search(libtype=libtype, filters=filters)),
+        ("nur ungesehen", lambda: section.search(libtype=libtype, unwatched=True)),
+        ("ohne Filter", lambda: section.search(libtype=libtype)),
+    )
+
+    letzter_fehler: Optional[Exception] = None
+    for beschreibung, versuch in versuche:
+        try:
+            return list(versuch())
+        except Exception as exc:
+            letzter_fehler = exc
+            log.warning(
+                "Suche in '%s' (%s) fehlgeschlagen: %s – nächste Stufe",
+                section.title,
+                beschreibung,
+                exc,
+            )
+    raise RuntimeError(
+        f"Bibliothek '{section.title}' ließ sich nicht durchsuchen: {letzter_fehler}"
+    )
 
 
 def collect_items(
@@ -224,6 +253,8 @@ def collect_items(
 
     items: list[PreviewItem] = []
     for obj in list(movies) + list(episodes):
+        if not is_unwatched(obj):
+            continue
         item = to_preview_item(obj)
         if item is not None and _in_range(item, start, end):
             items.append(item)

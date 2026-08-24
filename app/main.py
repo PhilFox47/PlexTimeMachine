@@ -207,6 +207,7 @@ def dashboard_context(
         "almanachs": db.list_almanachs(session, user_id) if user_id else [],
         "journeys": db.list_journeys(session, user_id) if user_id else [],
         "next_poll_at": scheduler.next_poll_at if scheduler else None,
+        "last_poll_at": scheduler.last_poll_at if scheduler else None,
     }
 
 

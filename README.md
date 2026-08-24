@@ -121,6 +121,25 @@ Events kurz hintereinander lösen nur einen Sync aus. Manuell gesetzte
 „gesehen“-Markierungen erzeugen laut Plex **kein** Webhook-Event – dafür ist das
 periodische Polling da.
 
+### Wenn nichts nachgezogen wird
+
+Gesehene Titel verschwinden über zwei Wege: das Polling (`PTM_POLL_INTERVAL_MINUTES`,
+erster Lauf eine Minute nach dem Start) und – mit Plex Pass – den Webhook. So
+lässt sich prüfen, ob das greift:
+
+- **Fußzeile**: zeigt „zuletzt HH:MM UTC“ und „nächster Lauf HH:MM UTC“.
+- **Logbuch**: jeder automatische Lauf erscheint mit Auslöser `poll` bzw.
+  `webhook`.
+- **Container-Log**: `docker compose logs -f` zeigt Zeilen wie
+  `[poll] Aktualisierung gestartet` und `[poll] Alex: 8 Items -> …`.
+
+Zwei Dinge, die kein Fehler sind:
+
+- **Angefangene, aber nicht zu Ende geschaute Titel** gelten in Plex als
+  ungesehen und bleiben deshalb in der Playlist.
+- Der Zeitreise-Zeitraum wird beim Polling unverändert übernommen; wer einen
+  neuen Zeitraum will, wählt ihn im Cockpit.
+
 ## Bedienung
 
 1. **Cockpit** – Zeitraum über die Datumsfelder, die Wochenschritte oder die
