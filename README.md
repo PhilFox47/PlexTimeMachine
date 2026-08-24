@@ -36,9 +36,9 @@ gepflegte Playlist** aktualisieren. Keine neue Playlist pro Suche.
   „ungesehen“ setzen, um ihn von vorn zu schauen (zweistufige Rückfrage).
 - **Cover-Bilder** – jede Playlist (Zeitreise wie Almanach) bekommt auf Wunsch
   ein eigenes Poster in Plex.
-- **Sammlungen an andere Profile weitergeben** – ein Almanach lässt sich in
-  weitere Home-User übernehmen; dort wird er gegen deren eigenen Watch-Status
-  gebaut.
+- **Sammlungen gemeinsam nutzen** – ein Almanach lässt sich für weitere
+  Home-User freigeben: ein Inhalt für alle, aber je Profil eine eigene Playlist
+  mit dem eigenen Watch-Status.
 - **Logbuch** – jeder Lauf mit Art, Zeitraum, Auslöser und Trefferzahl.
 
 ## Multi-User und Watched-Status
@@ -184,23 +184,35 @@ Playlist erscheint.
   gesetzt.
 - „Cover entfernen“ löscht die Datei und auch das Poster in Plex.
 
-### Sammlungen an andere Profile weitergeben
+### Sammlungen gemeinsam nutzen
 
-Im Abschnitt **Für andere Profile** einer Sammlung lassen sich beliebige weitere
-Home-User ankreuzen und die Sammlung dorthin übernehmen. Jedes Zielprofil
-bekommt seine **eigene** Sammlung samt eigener Playlist – gebaut aus dem
-Watch-Status dieses Profils. Aus derselben Star-Wars-Sammlung wird so bei einer
-Person eine Playlist mit fünf, bei einer anderen mit sechs Titeln, je nachdem,
-wer was schon gesehen hat.
+Im Abschnitt **Für andere Profile** einer Sammlung lassen sich weitere
+Home-User freigeben. Freigeben legt **keine Kopie** an:
 
-- Die Playlists werden gleich mitgebaut; das Ergebnis nennt je Profil die Zahl
-  der ungesehenen Titel.
-- Ein vorhandenes Cover wird mit übernommen.
-- Führt ein Profil bereits eine Sammlung dieses Namens, wird sie **ergänzt**
-  statt verdoppelt. Ein erneutes Übernehmen gleicht also nur die fehlenden Titel
-  nach – eigene Ergänzungen des anderen Profils bleiben dabei erhalten.
-- Danach sind die Sammlungen unabhängig: spätere Änderungen wandern nicht von
-  selbst mit. Wer sie angleichen will, drückt den Knopf einfach erneut.
+- **Der Inhalt bleibt einer.** Nimmt der Eigentümer später Titel auf oder
+  heraus, gilt das sofort für alle freigegebenen Profile – beim nächsten Bau
+  und beim Polling.
+- **Der Fortschritt bleibt persönlich.** Jedes Profil bekommt seine eigene
+  Playlist (`Plex Almanach – <Profil> · <Name>`), gefüllt mit dem, was *dieses*
+  Profil noch nicht gesehen hat. Aus derselben Sammlung wird so bei einer Person
+  eine Playlist mit vier, bei einer anderen mit sechs Titeln.
+- **Zurücksetzen wirkt nur auf das eigene Profil**; die anderen behalten ihren
+  Fortschritt.
+
+Wer was darf:
+
+| | Eigentümer | freigegebenes Profil |
+|---|---|---|
+| Inhalt suchen, aufnehmen, entfernen | ja | nein (sieht ihn nur) |
+| Umbenennen, löschen, Cover setzen | ja | nein |
+| Freigaben verwalten | ja | nein |
+| Eigene Playlist bauen | ja | ja |
+| Eigenen Watch-Status zurücksetzen | ja | ja |
+
+Der „Erstellen“-Knopf baut beim Eigentümer die Playlists **aller** beteiligten
+Profile (jeweils mit deren Watch-Status), bei einem freigegebenen Profil nur die
+eigene. Eine zurückgenommene Freigabe entfernt auch die Playlist dieses Profils;
+der Inhalt bleibt beim Eigentümer.
 
 ### Watch-Status zurücksetzen
 
@@ -247,7 +259,7 @@ Wochenschritte übernehmen diesen Zuschnitt dann unverändert.
 ```
 app/
 ├── main.py          FastAPI: Seiten, htmx-Fragmente, Webhook, Thumb-Proxy
-├── almanach.py      Titelsuche, Sammlungen, Release-Order-Playlist, Reset, Kopie
+├── almanach.py      Titelsuche, Sammlungen, Release-Order-Playlist, Reset, Freigaben
 ├── config.py        Settings aus Env-Variablen
 ├── covers.py        Cover-Bilder prüfen, ablegen, wiederfinden
 ├── formatting.py    Deutsche Datumsformate, Wochentage, Wochenrechnung
@@ -286,7 +298,7 @@ ein Webhook-Event.
 | `GET` | `/almanach/{id}/search`, `/almanach/{id}/preview` | Trefferliste, Vorschau in Release-Order |
 | `POST` | `/almanach/{id}/add`, `/almanach/{id}/remove` | Bestand pflegen |
 | `POST` | `/almanach/{id}/sync` | Playlist der Sammlung schreiben |
-| `POST` | `/almanach/{id}/share` | Sammlung in andere Profile übernehmen |
+| `POST` | `/almanach/{id}/share`, `/almanach/{id}/share/revoke` | Freigaben erteilen und zurücknehmen |
 | `POST` | `/almanach/{id}/cover`, `/almanach/{id}/cover/delete` | Cover setzen bzw. entfernen |
 | `GET` | `/almanach/{id}/cover/image` | Cover ausliefern (für die Vorschau) |
 | `POST` | `/cover/timemachine`, `/cover/timemachine/delete` | Cover der Zeitreise-Playlist |
@@ -311,16 +323,17 @@ pytest -q
 Die Suite deckt Suche, Sortierung, Blacklist-Logik, Playlist-Pflege (inkl.
 Leeren, Nachfüllen in Blöcken und dem Fall, dass Plex eine leer geräumte
 Playlist selbst entfernt), Wochenrechnung und Wochentagsanzeige, den Almanach
-(Titelsuche, Serien-Auflösung, Release-Order, fehlende Einträge), das Übernehmen
-in andere Profile inklusive getrennter Watch-Stände, Cover-Prüfung
-und -Übertragung sowie
+(Titelsuche, Serien-Auflösung, Release-Order, fehlende Einträge), die Freigabe an andere
+Profile inklusive getrennter Watch-Stände, Cover-Prüfung und -Übertragung sowie
 Scheduler-Entprellung und alle HTTP-Endpunkte gegen ein Plex-Double ab –
 ein echter Plex-Server wird dafür nicht gebraucht.
 
 Bestehende Datenbanken werden beim Start automatisch um neue Spalten ergänzt;
 ein Update kostet also keine Blacklist- oder Logbuch-Einträge. Ein Almanach aus
 der Version vor den benannten Sammlungen wird dabei zu „Mein Almanach“ und
-behält seinen bisherigen Playlist-Namen.
+behält seinen bisherigen Playlist-Namen; Sammlungen aus der Version vor den
+Freigaben bekommen automatisch eine Freigabe-Zeile für ihren Eigentümer und
+behalten damit ihre bestehende Plex-Playlist.
 
 ## Sicherheitshinweis
 
@@ -332,7 +345,6 @@ Authentifizierung davorsetzen und `PTM_WEBHOOK_TOKEN` setzen.
 
 - Friends-Accounts (eigener Plex-Login) statt nur Home-User
 - Blacklist auf Episoden-Ebene statt nur ganze Serien/Filme
-- Almanach: Sammlungen wirklich gemeinsam führen statt kopieren (Änderungen
-  würden dann automatisch in allen Profilen ankommen)
+- Almanach: freigegebene Profile dürfen den Inhalt bisher nicht mitpflegen
 - Historie zuletzt genutzter Zeiträume als Schnellauswahl
   (aktuell wird nur der jeweils letzte Zeitraum gemerkt)

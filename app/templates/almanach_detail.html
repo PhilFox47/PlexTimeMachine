@@ -7,22 +7,31 @@
 <section class="panel book">
   <h2><a href="/almanach">Almanachs</a> · {{ almanach.name }}</h2>
 
+  {% if is_owner %}
   <form class="search-bar" method="post" action="/almanach/{{ almanach.id }}/rename">
     <input type="text" name="name" maxlength="80" required value="{{ almanach.name }}"
            aria-label="Name des Almanachs">
     <button class="btn" type="submit">Umbenennen</button>
   </form>
+  {% else %}
+  <div class="notice muted">
+    Freigegeben von <strong>{{ almanach.plex_user_id }}</strong> – der Inhalt wird
+    dort gepflegt. Deine Playlist und dein Fortschritt gehören dir.
+  </div>
+  {% endif %}
 
   <p class="cell-sub">
-    Playlist: <span class="mono">{{ almanach.target_playlist_name }}</span>
-    {%- if almanach.last_synced_at %} · zuletzt erstellt
-      {{ almanach.last_synced_at|de_datetime }} UTC mit {{ almanach.last_item_count }} Titeln
+    Deine Playlist: <span class="mono">{{ share.target_playlist_name }}</span>
+    {%- if share.last_synced_at %} · zuletzt gebaut
+      {{ share.last_synced_at|de_datetime }} UTC mit {{ share.last_item_count }} Titeln
     {%- endif %}
+    {%- if shares|length > 1 %} · {{ shares|length }} Profile teilen sich den Inhalt{% endif %}
   </p>
 </section>
 
+{% if is_owner %}
 <section class="panel">
-  <h2>Cover der Playlist</h2>
+  <h2>Cover der Playlists</h2>
 
   {% include "partials/cover_notice.html" %}
 
@@ -59,9 +68,10 @@
 
   <div id="search-results"></div>
 </section>
+{% endif %}
 
 <section class="panel book">
-  <h2>Bestand</h2>
+  <h2>Bestand{% if shares|length > 1 %} · gilt für alle Profile{% endif %}</h2>
 
   <div id="almanach-stock">
     {% include "partials/almanach_stock.html" %}
@@ -96,24 +106,28 @@
   </div>
 
   <p class="cell-sub" style="margin-bottom:0">
-    Schreibt alle ungesehenen Titel des Bestands nach Erscheinungsdatum sortiert
-    in »{{ almanach.target_playlist_name }}«. Polling und Webhook ziehen die
-    Playlist danach automatisch nach.
+    Schreibt alle ungesehenen Titel nach Erscheinungsdatum sortiert in
+    »{{ share.target_playlist_name }}«
+    {%- if is_owner and shares|length > 1 %} und in die Playlists der anderen
+      freigegebenen Profile – jeweils mit deren eigenem Watch-Status{% endif %}.
+    Polling und Webhook ziehen alles automatisch nach.
   </p>
 </section>
 
+{% if is_owner %}
 <section class="panel">
   <h2>Für andere Profile</h2>
 
   <div id="share-flux" class="flux">
     <div class="flux-bar"></div>
-    <div class="flux-text">Übernehme in die gewählten Profile …</div>
+    <div class="flux-text">Gebe für die gewählten Profile frei …</div>
   </div>
 
   <div id="share-zone">
     {% include "partials/almanach_share.html" %}
   </div>
 </section>
+{% endif %}
 
 <section class="panel">
   <h2>Gefahrenzone</h2>
@@ -123,12 +137,14 @@
             hx-get="/almanach/{{ almanach.id }}/reset"
             hx-target="#reset-zone"
             hx-swap="innerHTML"
-            hx-indicator="#reset-flux">Watch-Status zurücksetzen …</button>
+            hx-indicator="#reset-flux">Meinen Watch-Status zurücksetzen …</button>
 
+    {% if is_owner %}
     <form method="post" action="/almanach/{{ almanach.id }}/delete" class="inline-form"
-          onsubmit="return confirm('Almanach »{{ almanach.name }}« mitsamt Playlist löschen?')">
+          onsubmit="return confirm('Almanach »{{ almanach.name }}« mitsamt aller Playlists löschen?')">
       <button class="btn-week" type="submit">Almanach löschen</button>
     </form>
+    {% endif %}
   </div>
 
   <div id="reset-flux" class="flux">
@@ -137,5 +153,10 @@
   </div>
 
   <div id="reset-zone"></div>
+
+  <p class="cell-sub" style="margin-bottom:0">
+    Der Reset betrifft nur deinen eigenen Watch-Status – andere Profile behalten
+    ihren Fortschritt.
+  </p>
 </section>
 {% endblock %}

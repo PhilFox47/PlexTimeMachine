@@ -114,8 +114,9 @@ def test_legacy_almanach_becomes_a_named_collection(tmp_path, monkeypatch):
         assert [a.name for a in alex] == ["Mein Almanach"]
         # Der bestehende Playlist-Name bleibt erhalten, damit die vorhandene
         # Plex-Playlist weiterverwendet wird statt eine zweite anzulegen.
-        assert alex[0].target_playlist_name == "Plex Almanach – Alex"
-        assert alex[0].last_item_count == 12
+        share = db.get_share(session, alex[0].id, "Alex")
+        assert share.target_playlist_name == "Plex Almanach – Alex"
+        assert share.last_item_count == 12
         assert db.almanach_keys(session, alex[0].id) == {"100", "1"}
 
         nina = db.list_almanachs(session, "Nina")
@@ -124,6 +125,71 @@ def test_legacy_almanach_becomes_a_named_collection(tmp_path, monkeypatch):
         # Ein zweiter Start darf keinen weiteren Almanach erzeugen.
         db.init_db()
         assert len(db.list_almanachs(session, "Alex")) == 1
+
+    db.reset_engine()
+    config.get_settings.cache_clear()
+
+
+def test_named_almanach_gains_a_share_row(tmp_path, monkeypatch):
+    """Vor dem Umbau steckte der Playlist-Zustand in der Sammlung selbst."""
+    path = tmp_path / "v4.db"
+    old = sqlite3.connect(path)
+    old.executescript(
+        """
+        CREATE TABLE almanach (
+            id INTEGER PRIMARY KEY,
+            plex_user_id VARCHAR NOT NULL,
+            name VARCHAR NOT NULL,
+            created_at DATETIME NOT NULL,
+            target_playlist_name VARCHAR NOT NULL,
+            last_synced_at DATETIME,
+            last_item_count INTEGER NOT NULL,
+            cover_path VARCHAR,
+            cover_applied_at DATETIME
+        );
+        CREATE TABLE almanach_entry (
+            id INTEGER PRIMARY KEY,
+            almanach_id INTEGER,
+            plex_user_id VARCHAR NOT NULL,
+            plex_rating_key VARCHAR NOT NULL,
+            media_type VARCHAR NOT NULL,
+            title VARCHAR NOT NULL,
+            year INTEGER,
+            added_at DATETIME NOT NULL
+        );
+        INSERT INTO almanach
+            (id, plex_user_id, name, created_at, target_playlist_name,
+             last_synced_at, last_item_count, cover_path, cover_applied_at)
+        VALUES (1, 'Alex', 'Star Wars', '2026-01-01 10:00:00',
+                'Plex Almanach – Alex · Star Wars', '2026-01-02 09:00:00', 9,
+                'almanach-1.png', '2026-01-02 09:00:00');
+        INSERT INTO almanach_entry
+            (almanach_id, plex_user_id, plex_rating_key, media_type, title, year, added_at)
+        VALUES (1, 'Alex', '100', 'show', 'Knight Rider', 1982, '2026-01-01 10:01:00');
+        """
+    )
+    old.commit()
+    old.close()
+
+    monkeypatch.setenv("PTM_DATABASE_URL", f"sqlite:///{path}")
+    config.get_settings.cache_clear()
+    db.reset_engine()
+
+    db.init_db()
+
+    with Session(db.get_engine()) as session:
+        almanach = db.list_almanachs(session, "Alex")[0]
+        assert almanach.name == "Star Wars"
+        assert almanach.cover_path == "almanach-1.png"   # Cover bleibt am Inhalt
+
+        share = db.get_share(session, almanach.id, "Alex")
+        assert share is not None
+        assert share.target_playlist_name == "Plex Almanach – Alex · Star Wars"
+        assert share.last_item_count == 9
+        assert db.almanach_keys(session, almanach.id) == {"100"}
+
+        db.init_db()  # zweiter Start legt keine zweite Freigabe an
+        assert len(db.list_shares(session, almanach.id)) == 1
 
     db.reset_engine()
     config.get_settings.cache_clear()

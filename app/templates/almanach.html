@@ -8,8 +8,9 @@
   <h2>Almanachs{% if current_user %} · {{ current_user }}{% endif %}</h2>
 
   <p class="cell-sub" style="margin-top:0">
-    Jeder Almanach ist eine benannte Sammlung aus Serien und Filmen und bekommt
-    eine eigene Playlist in Release-Order.
+    Jeder Almanach ist eine benannte Sammlung aus Serien und Filmen. Freigegebene
+    Sammlungen teilen sich den Inhalt – die Playlist und der Fortschritt bleiben
+    pro Profil.
   </p>
 
   {% if not almanachs %}
@@ -18,10 +19,11 @@
   <div class="table-wrap">
     <table>
       <thead>
-        <tr><th></th><th>Name</th><th>Playlist</th><th>Zuletzt erstellt</th><th>Titel</th><th></th></tr>
+        <tr><th></th><th>Name</th><th>Deine Playlist</th><th>Zuletzt gebaut</th><th>Titel</th><th></th></tr>
       </thead>
       <tbody>
       {% for item in almanachs %}
+        {% set share = shares_by_almanach.get(item.id) %}
         <tr>
           <td>
             {% if item.cover_path %}
@@ -30,12 +32,18 @@
               <div class="poster-fallback">?</div>
             {% endif %}
           </td>
-          <td class="cell-title"><a href="/almanach/{{ item.id }}">{{ item.name }}</a></td>
-          <td class="cell-sub">{{ item.target_playlist_name }}</td>
-          <td class="mono">
-            {%- if item.last_synced_at %}{{ item.last_synced_at|de_datetime }}{% else %}noch nie{% endif %}
+          <td>
+            <div class="cell-title"><a href="/almanach/{{ item.id }}">{{ item.name }}</a></div>
+            {% if item.plex_user_id != current_user %}
+              <div class="cell-sub">freigegeben von {{ item.plex_user_id }}</div>
+            {% endif %}
           </td>
-          <td class="cell-title">{{ item.last_item_count }}</td>
+          <td class="cell-sub">{{ share.target_playlist_name if share else '—' }}</td>
+          <td class="mono">
+            {%- if share and share.last_synced_at %}{{ share.last_synced_at|de_datetime }}
+            {%- else %}noch nie{% endif %}
+          </td>
+          <td class="cell-title">{{ share.last_item_count if share else 0 }}</td>
           <td class="list-actions">
             <a class="btn" href="/almanach/{{ item.id }}">Öffnen</a>
           </td>

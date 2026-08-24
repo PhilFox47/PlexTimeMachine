@@ -566,6 +566,12 @@ tbody tr:hover { background: rgba(41, 215, 200, 0.05); }
 
 .profile-option:hover { border-color: var(--teal-dim); }
 
+.profile-pick { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; cursor: pointer; }
+
+.profile-flag { color: var(--green); }
+
+.profile-option .btn-ban { margin-left: auto; }
+
 .profile-option input[type="checkbox"] {
   accent-color: var(--teal);
   width: 15px;

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from app import covers, db
-from app.almanach import sync_almanach
+from app.almanach import sync_share
 from app.sync_engine import apply_cover_after_sync, apply_playlist, clear_cover, push_cover
 from tests.conftest import make_png
 
@@ -16,6 +16,11 @@ GIF = b"GIF89a" + b"\x00" * 10
 @pytest.fixture
 def almanach(session):
     return db.create_almanach(session, "Alex", "Star Wars")
+
+
+@pytest.fixture
+def share(session, almanach):
+    return db.get_or_create_share(session, almanach, "Alex")
 
 
 # ---------------------------------------------------------------------------
@@ -136,23 +141,23 @@ def test_apply_cover_without_a_cover_does_nothing(gateway):
     assert apply_cover_after_sync(outcome, None, already_applied=False) is False
 
 
-def test_sync_uploads_the_cover_of_the_collection(session, gateway, almanach, png_image):
+def test_sync_uploads_the_cover_of_the_collection(session, gateway, almanach, share, png_image):
     almanach.cover_path = covers.store(covers.almanach_stem(almanach.id), png_image)
     db.add_to_almanach(session, almanach, "2", "movie", "Brazil")
 
-    result = sync_almanach(session, almanach, gateway=gateway)
+    result = sync_share(session, share, gateway=gateway)
 
     assert result.ok
     assert gateway.server.playlists()[0].posters == [png_image]
-    assert almanach.cover_applied_at is not None
+    assert share.cover_applied_at is not None
 
 
-def test_push_cover_reaches_an_existing_playlist(session, gateway, almanach, png_image):
+def test_push_cover_reaches_an_existing_playlist(session, gateway, almanach, share, png_image):
     filename = covers.store(covers.almanach_stem(almanach.id), png_image)
     db.add_to_almanach(session, almanach, "2", "movie", "Brazil")
-    sync_almanach(session, almanach, gateway=gateway)
+    sync_share(session, share, gateway=gateway)
 
-    assert push_cover(gateway, "Alex", almanach.target_playlist_name, filename) is True
+    assert push_cover(gateway, "Alex", share.target_playlist_name, filename) is True
     assert gateway.server.playlists()[0].posters[-1] == png_image
 
 
@@ -162,11 +167,11 @@ def test_push_cover_waits_when_there_is_no_playlist_yet(gateway, png_image):
     assert push_cover(gateway, "Alex", "Noch nicht da", filename) is False
 
 
-def test_clear_cover_removes_the_poster(session, gateway, almanach, png_image):
+def test_clear_cover_removes_the_poster(session, gateway, almanach, share, png_image):
     almanach.cover_path = covers.store(covers.almanach_stem(almanach.id), png_image)
     db.add_to_almanach(session, almanach, "2", "movie", "Brazil")
-    sync_almanach(session, almanach, gateway=gateway)
+    sync_share(session, share, gateway=gateway)
 
-    assert clear_cover(gateway, "Alex", almanach.target_playlist_name) is True
+    assert clear_cover(gateway, "Alex", share.target_playlist_name) is True
     playlist = gateway.server.playlists()[0]
     assert playlist.posters == [] and playlist.poster_deleted is True

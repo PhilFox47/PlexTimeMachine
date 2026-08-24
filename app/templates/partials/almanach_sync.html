@@ -1,0 +1,12 @@
+{# Ergebnis je Profil – der Eigentümer baut für alle mit. #}
+{% for result in results %}
+  {% if result.ok %}
+    <div class="notice ok">
+      <strong>{{ result.user_id }}:</strong> {{ result.message }}
+    </div>
+  {% else %}
+    <div class="notice error">
+      <strong>{{ result.user_id }}:</strong> {{ result.error }}
+    </div>
+  {% endif %}
+{% endfor %}

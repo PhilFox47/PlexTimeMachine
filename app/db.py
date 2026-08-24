@@ -60,19 +60,39 @@ class BlacklistEntry(SQLModel, table=True):
 
 
 class Almanach(SQLModel, table=True):
-    """Eine benannte Sammlung – ein Nutzer kann beliebig viele davon führen."""
+    """Eine benannte Sammlung: der Inhalt, den sich mehrere Profile teilen.
+
+    Die Einträge (und das Cover) hängen an dieser Zeile und gelten für alle
+    freigegebenen Profile. Gepflegt werden sie vom Eigentümer.
+    """
 
     __tablename__ = "almanach"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    plex_user_id: str = Field(index=True)
+    plex_user_id: str = Field(index=True)  # Eigentümer: pflegt den Inhalt
     name: str = ""
     created_at: datetime = Field(default_factory=utcnow)
+    cover_path: Optional[str] = None
+
+
+class AlmanachShare(SQLModel, table=True):
+    """Die Playlist eines Profils zu einer Sammlung – der eigene Fortschritt.
+
+    Für jedes freigegebene Profil (den Eigentümer eingeschlossen) gibt es genau
+    eine Zeile. Der Inhalt kommt aus dem Almanach, gebaut wird er aber im
+    Kontext dieses Profils – der Watch-Status bleibt damit persönlich.
+    """
+
+    __tablename__ = "almanach_share"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    almanach_id: int = Field(index=True)
+    plex_user_id: str = Field(index=True)
     target_playlist_name: str = ""
+    created_at: datetime = Field(default_factory=utcnow)
     last_synced_at: Optional[datetime] = None
     last_item_count: int = 0
-    cover_path: Optional[str] = None
-    cover_applied_at: Optional[datetime] = None
+    cover_applied_at: Optional[datetime] = None  # je Playlist, nicht je Sammlung
 
 
 class AlmanachEntry(SQLModel, table=True):
@@ -200,17 +220,21 @@ def _migrate_legacy_almanach(engine) -> int:
 
         for user_id, entries in by_user.items():
             almanach = Almanach(plex_user_id=user_id, name="Mein Almanach")
-            state = legacy_state.get(user_id)
-            almanach.target_playlist_name = (
-                state[1]
-                if state and state[1]
-                else get_settings().almanach_playlist_name_for(user_id, almanach.name)
-            )
-            if state:
-                almanach.last_item_count = state[3] or 0
             session.add(almanach)
             session.commit()
             session.refresh(almanach)
+
+            state = legacy_state.get(user_id)
+            session.add(
+                AlmanachShare(
+                    almanach_id=almanach.id,
+                    plex_user_id=user_id,
+                    target_playlist_name=(state[1] if state and state[1] else "")
+                    or get_settings().almanach_playlist_name_for(user_id, almanach.name),
+                    last_item_count=(state[3] if state else 0) or 0,
+                )
+            )
+            session.commit()
 
             for entry in entries:
                 entry.almanach_id = almanach.id
@@ -221,11 +245,58 @@ def _migrate_legacy_almanach(engine) -> int:
     return migrated
 
 
+def _migrate_almanach_shares(engine) -> int:
+    """Jede Sammlung ohne Freigabe-Zeile bekommt eine für ihren Eigentümer.
+
+    Vor dem Umbau steckte der Playlist-Zustand direkt in der Sammlung. Diese
+    Spalten gibt es in alten Datenbanken noch – ihre Werte wandern in die
+    Freigabe, damit die bestehende Plex-Playlist weiterverwendet wird.
+    """
+    inspector = inspect(engine)
+    if "almanach" not in set(inspector.get_table_names()):
+        return 0
+
+    columns = {column["name"] for column in inspector.get_columns("almanach")}
+    legacy = {"target_playlist_name", "last_synced_at", "last_item_count"} <= columns
+
+    old_state: dict[int, tuple] = {}
+    if legacy:
+        with engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    "SELECT id, target_playlist_name, last_synced_at, last_item_count "
+                    "FROM almanach"
+                )
+            ).all()
+        old_state = {row[0]: row for row in rows}
+
+    migrated = 0
+    with Session(engine) as session:
+        for almanach in session.exec(select(Almanach)).all():
+            if get_share(session, almanach.id, almanach.plex_user_id) is not None:
+                continue
+            state = old_state.get(almanach.id)
+            share = AlmanachShare(
+                almanach_id=almanach.id,
+                plex_user_id=almanach.plex_user_id,
+                target_playlist_name=(state[1] if state and state[1] else "")
+                or get_settings().almanach_playlist_name_for(
+                    almanach.plex_user_id, almanach.name
+                ),
+                last_item_count=(state[3] if state else 0) or 0,
+            )
+            session.add(share)
+            session.commit()
+            migrated += 1
+    return migrated
+
+
 def init_db() -> None:
     engine = get_engine()
     _add_missing_columns(engine)
     SQLModel.metadata.create_all(engine)
     _migrate_legacy_almanach(engine)
+    _migrate_almanach_shares(engine)
 
 
 def get_session() -> Iterator[Session]:
@@ -337,58 +408,50 @@ def remove_from_blacklist(session: Session, user_id: str, rating_key: str) -> bo
 
 
 def create_almanach(session: Session, user_id: str, name: str) -> Almanach:
-    almanach = Almanach(
-        plex_user_id=user_id,
-        name=name.strip() or "Ohne Namen",
-    )
-    almanach.target_playlist_name = get_settings().almanach_playlist_name_for(
-        user_id, almanach.name
-    )
+    """Sammlung anlegen – der Eigentümer bekommt gleich seine eigene Playlist."""
+    almanach = Almanach(plex_user_id=user_id, name=name.strip() or "Ohne Namen")
     session.add(almanach)
     session.commit()
     session.refresh(almanach)
+    get_or_create_share(session, almanach, user_id)
     return almanach
 
 
 def list_almanachs(session: Session, user_id: str) -> Sequence[Almanach]:
-    stmt = (
-        select(Almanach)
-        .where(Almanach.plex_user_id == user_id)
-        .order_by(Almanach.name)
-    )
+    """Alle Sammlungen, auf die ein Profil Zugriff hat (eigene und freigegebene)."""
+    almanach_ids = session.exec(
+        select(AlmanachShare.almanach_id).where(AlmanachShare.plex_user_id == user_id)
+    ).all()
+    if not almanach_ids:
+        return []
+    stmt = select(Almanach).where(Almanach.id.in_(almanach_ids)).order_by(Almanach.name)
     return session.exec(stmt).all()
 
 
 def get_almanach(session: Session, user_id: str, almanach_id: int) -> Optional[Almanach]:
-    """Almanach laden – nur wenn er dem angegebenen Nutzer gehört."""
+    """Sammlung laden – nur wenn das Profil dafür freigegeben ist."""
     almanach = session.get(Almanach, almanach_id)
-    if almanach is None or almanach.plex_user_id != user_id:
+    if almanach is None or get_share(session, almanach_id, user_id) is None:
         return None
     return almanach
 
 
-def find_almanach_by_name(
-    session: Session, user_id: str, name: str
-) -> Optional[Almanach]:
-    """Sammlung eines Nutzers anhand des Namens – für das Übernehmen in Profile."""
-    stmt = select(Almanach).where(
-        Almanach.plex_user_id == user_id, Almanach.name == name
-    )
-    return session.exec(stmt).first()
-
 
 def rename_almanach(session: Session, almanach: Almanach, name: str) -> Almanach:
-    """Umbenennen – der Playlist-Name zieht mit, sofern er dem Muster folgt."""
+    """Umbenennen – die Playlist-Namen aller Profile ziehen mit."""
     settings = get_settings()
-    old_default = settings.almanach_playlist_name_for(
-        almanach.plex_user_id, almanach.name
-    )
+    old_name = almanach.name
     almanach.name = name.strip() or almanach.name
-    if not almanach.target_playlist_name or almanach.target_playlist_name == old_default:
-        almanach.target_playlist_name = settings.almanach_playlist_name_for(
-            almanach.plex_user_id, almanach.name
-        )
     session.add(almanach)
+
+    for share in list_shares(session, almanach.id):
+        old_default = settings.almanach_playlist_name_for(share.plex_user_id, old_name)
+        if not share.target_playlist_name or share.target_playlist_name == old_default:
+            share.target_playlist_name = settings.almanach_playlist_name_for(
+                share.plex_user_id, almanach.name
+            )
+            session.add(share)
+
     session.commit()
     session.refresh(almanach)
     return almanach
@@ -397,8 +460,95 @@ def rename_almanach(session: Session, almanach: Almanach, name: str) -> Almanach
 def delete_almanach(session: Session, almanach: Almanach) -> None:
     for entry in list_almanach_entries(session, almanach.id):
         session.delete(entry)
+    for share in list_shares(session, almanach.id):
+        session.delete(share)
     session.delete(almanach)
     session.commit()
+
+
+# --- Freigaben: eine Playlist je Profil ----------------------------------
+
+
+def get_share(
+    session: Session, almanach_id: int, user_id: str
+) -> Optional[AlmanachShare]:
+    stmt = select(AlmanachShare).where(
+        AlmanachShare.almanach_id == almanach_id,
+        AlmanachShare.plex_user_id == user_id,
+    )
+    return session.exec(stmt).first()
+
+
+def get_or_create_share(
+    session: Session, almanach: Almanach, user_id: str
+) -> AlmanachShare:
+    share = get_share(session, almanach.id, user_id)
+    if share is None:
+        share = AlmanachShare(
+            almanach_id=almanach.id,
+            plex_user_id=user_id,
+            target_playlist_name=get_settings().almanach_playlist_name_for(
+                user_id, almanach.name
+            ),
+        )
+        session.add(share)
+        session.commit()
+        session.refresh(share)
+    elif not share.target_playlist_name:
+        share.target_playlist_name = get_settings().almanach_playlist_name_for(
+            user_id, almanach.name
+        )
+        session.add(share)
+        session.commit()
+        session.refresh(share)
+    return share
+
+
+def list_shares(session: Session, almanach_id: int) -> Sequence[AlmanachShare]:
+    stmt = (
+        select(AlmanachShare)
+        .where(AlmanachShare.almanach_id == almanach_id)
+        .order_by(AlmanachShare.plex_user_id)
+    )
+    return session.exec(stmt).all()
+
+
+def share_user_ids(session: Session, almanach_id: int) -> set[str]:
+    return {share.plex_user_id for share in list_shares(session, almanach_id)}
+
+
+def remove_share(session: Session, almanach_id: int, user_id: str) -> Optional[AlmanachShare]:
+    """Freigabe zurücknehmen; gibt die entfernte Zeile zurück (für die Playlist)."""
+    share = get_share(session, almanach_id, user_id)
+    if share is None:
+        return None
+    session.delete(share)
+    session.commit()
+    return share
+
+
+def reset_cover_state(session: Session, almanach_id: int) -> None:
+    """Nach einem Cover-Wechsel muss es auf jede Playlist neu übertragen werden."""
+    for share in list_shares(session, almanach_id):
+        share.cover_applied_at = None
+        session.add(share)
+    session.commit()
+
+
+def shares_with_entries(session: Session) -> list[tuple[AlmanachShare, Almanach]]:
+    """Alle Playlists, hinter denen eine gefüllte Sammlung steht (Scheduler)."""
+    filled = set(session.exec(select(AlmanachEntry.almanach_id).distinct()).all())
+    pairs: list[tuple[AlmanachShare, Almanach]] = []
+    stmt = select(AlmanachShare).order_by(
+        AlmanachShare.plex_user_id, AlmanachShare.almanach_id
+    )
+    for share in session.exec(stmt).all():
+        if share.almanach_id not in filled:
+            continue
+        almanach = session.get(Almanach, share.almanach_id)
+        if almanach is not None:
+            pairs.append((share, almanach))
+    return pairs
 
 
 def list_almanach_entries(session: Session, almanach_id: int) -> Sequence[AlmanachEntry]:
@@ -461,13 +611,6 @@ def remove_from_almanach(session: Session, almanach: Almanach, rating_key: str) 
     session.delete(entry)
     session.commit()
     return True
-
-
-def almanachs_with_entries(session: Session) -> list[Almanach]:
-    """Alle Almanachs, die mindestens einen Eintrag haben (für den Scheduler)."""
-    filled = set(session.exec(select(AlmanachEntry.almanach_id).distinct()).all())
-    stmt = select(Almanach).order_by(Almanach.plex_user_id, Almanach.name)
-    return [a for a in session.exec(stmt).all() if a.id in filled]
 
 
 def log_journey(

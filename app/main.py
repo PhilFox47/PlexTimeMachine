@@ -423,48 +423,56 @@ async def timemachine_cover_image(
 # ---------------------------------------------------------------------------
 
 
-def _require_almanach(request: Request, session: Session, almanach_id: int):
-    """Almanach des aktuell gewählten Nutzers laden – sonst 404."""
+def _require_access(request: Request, session: Session, almanach_id: int):
+    """Sammlung + Freigabe des aktuellen Profils laden – sonst 404."""
     users, _ = load_users()
     user_id = resolve_user(request, users)
     almanach = db.get_almanach(session, user_id, almanach_id) if user_id else None
     if almanach is None:
         raise HTTPException(status_code=404, detail="Almanach nicht gefunden")
-    return almanach
+    return almanach, db.get_or_create_share(session, almanach, user_id), user_id
 
 
-def _detail_context(request: Request, session: Session, almanach) -> dict:
+def _require_owner(request: Request, session: Session, almanach_id: int):
+    """Wie _require_access, aber nur für den Eigentümer – er pflegt den Inhalt."""
+    almanach, share, user_id = _require_access(request, session, almanach_id)
+    if almanach.plex_user_id != user_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Nur der Eigentümer der Sammlung kann sie ändern.",
+        )
+    return almanach, share, user_id
+
+
+def _detail_context(request: Request, session: Session, almanach, share, user_id) -> dict:
     context = dashboard_context(request, session)
     context["almanach"] = almanach
+    context["share"] = share
     context["entries"] = db.list_almanach_entries(session, almanach.id)
+    context["is_owner"] = almanach.plex_user_id == user_id
+    context["shares"] = db.list_shares(session, almanach.id)
     context["share_targets"] = _share_targets(session, almanach, context["users"])
     return context
 
 
 def _share_targets(session: Session, almanach, users) -> list[dict]:
-    """Andere Home-User samt Hinweis, ob sie die Sammlung schon führen."""
-    targets = []
-    for user in users:
-        if user.id == almanach.plex_user_id:
-            continue
-        existing = db.find_almanach_by_name(session, user.id, almanach.name)
-        targets.append(
-            {
-                "user": user,
-                "exists": existing is not None,
-                "count": len(db.list_almanach_entries(session, existing.id))
-                if existing
-                else 0,
-            }
-        )
-    return targets
+    """Andere Home-User samt Hinweis, ob die Sammlung für sie freigegeben ist."""
+    freigegeben = db.share_user_ids(session, almanach.id)
+    return [
+        {"user": user, "shared": user.id in freigegeben}
+        for user in users
+        if user.id != almanach.plex_user_id
+    ]
 
 
 @app.get("/almanach", response_class=HTMLResponse)
 async def almanach_overview(request: Request, session: Session = Depends(db.get_session)):
-    return templates.TemplateResponse(
-        request, "almanach.html", dashboard_context(request, session)
-    )
+    context = dashboard_context(request, session)
+    context["shares_by_almanach"] = {
+        almanach.id: db.get_or_create_share(session, almanach, context["current_user"])
+        for almanach in context["almanachs"]
+    }
+    return templates.TemplateResponse(request, "almanach.html", context)
 
 
 @app.post("/almanach/new")
@@ -485,9 +493,11 @@ async def almanach_new(
 async def almanach_detail(
     request: Request, almanach_id: int, session: Session = Depends(db.get_session)
 ):
-    almanach = _require_almanach(request, session, almanach_id)
+    almanach, share, user_id = _require_access(request, session, almanach_id)
     return templates.TemplateResponse(
-        request, "almanach_detail.html", _detail_context(request, session, almanach)
+        request,
+        "almanach_detail.html",
+        _detail_context(request, session, almanach, share, user_id),
     )
 
 
@@ -498,37 +508,41 @@ async def almanach_rename(
     name: str = Form(...),
     session: Session = Depends(db.get_session),
 ):
-    almanach = _require_almanach(request, session, almanach_id)
-    old_playlist_name = almanach.target_playlist_name
+    almanach, _share, _user = _require_owner(request, session, almanach_id)
+    # Playlist-Namen vorher merken, damit die Playlists in Plex mitwandern.
+    vorher = {s.plex_user_id: s.target_playlist_name for s in db.list_shares(session, almanach.id)}
     db.rename_almanach(session, almanach, name)
-    await run_in_threadpool(_rename_playlist_quietly, almanach, old_playlist_name)
+    await run_in_threadpool(_rename_playlists_quietly, session, almanach, vorher)
     return RedirectResponse(f"/almanach/{almanach_id}", status_code=303)
 
 
-def _rename_playlist_quietly(almanach, old_playlist_name: str) -> None:
-    """Plex-Playlist nachbenennen; scheitert das, baut der nächste Sync sie neu."""
-    try:
-        almanach_lib.rename_playlist(almanach, old_playlist_name)
-    except Exception as exc:  # pragma: no cover - Plex kann offline sein
-        log.warning("Playlist »%s« nicht umbenannt: %s", old_playlist_name, exc)
+def _rename_playlists_quietly(session: Session, almanach, vorher: dict) -> None:
+    """Plex-Playlists aller Profile nachbenennen; Fehler sind nicht kritisch."""
+    for share in db.list_shares(session, almanach.id):
+        old = vorher.get(share.plex_user_id, "")
+        try:
+            almanach_lib.rename_playlist(share, old)
+        except Exception as exc:  # pragma: no cover - Plex kann offline sein
+            log.warning("Playlist »%s« nicht umbenannt: %s", old, exc)
 
 
 @app.post("/almanach/{almanach_id}/delete")
 async def almanach_delete(
     request: Request, almanach_id: int, session: Session = Depends(db.get_session)
 ):
-    almanach = _require_almanach(request, session, almanach_id)
-    await run_in_threadpool(_delete_playlist_quietly, almanach)
+    almanach, _share, _user = _require_owner(request, session, almanach_id)
+    await run_in_threadpool(_delete_playlists_quietly, session, almanach)
     db.delete_almanach(session, almanach)
     return RedirectResponse("/almanach", status_code=303)
 
 
-def _delete_playlist_quietly(almanach) -> None:
-    """Zugehörige Plex-Playlist mit entfernen – Fehler sind nicht kritisch."""
-    try:
-        almanach_lib.delete_playlist(almanach)
-    except Exception as exc:  # pragma: no cover - Plex kann offline sein
-        log.warning("Playlist zu »%s« nicht entfernt: %s", almanach.name, exc)
+def _delete_playlists_quietly(session: Session, almanach) -> None:
+    """Die Playlists aller Profile mit entfernen – Fehler sind nicht kritisch."""
+    for share in db.list_shares(session, almanach.id):
+        try:
+            almanach_lib.delete_playlist(share)
+        except Exception as exc:  # pragma: no cover - Plex kann offline sein
+            log.warning("Playlist zu »%s« nicht entfernt: %s", almanach.name, exc)
 
 
 @app.get("/almanach/{almanach_id}/search", response_class=HTMLResponse)
@@ -538,14 +552,16 @@ async def almanach_search(
     q: str = Query(""),
     session: Session = Depends(db.get_session),
 ):
-    almanach = _require_almanach(request, session, almanach_id)
-    result = await run_in_threadpool(almanach_lib.search_titles, session, almanach, q)
+    almanach, _share, user_id = _require_owner(request, session, almanach_id)
+    result = await run_in_threadpool(
+        almanach_lib.search_titles, session, almanach, q, user_id
+    )
     return templates.TemplateResponse(
         request, "partials/almanach_search.html", {"search": result, "almanach": almanach}
     )
 
 
-def _stock_response(request: Request, session: Session, almanach) -> HTMLResponse:
+def _stock_response(request: Request, session: Session, almanach, is_owner: bool = True) -> HTMLResponse:
     """Bestandsliste neu rendern – reine Datenbankarbeit, daher schnell."""
     return templates.TemplateResponse(
         request,
@@ -553,6 +569,8 @@ def _stock_response(request: Request, session: Session, almanach) -> HTMLRespons
         {
             "almanach": almanach,
             "entries": db.list_almanach_entries(session, almanach.id),
+            "is_owner": is_owner,
+            "shares": db.list_shares(session, almanach.id),
         },
     )
 
@@ -567,7 +585,7 @@ async def almanach_add(
     year: str = Form(""),
     session: Session = Depends(db.get_session),
 ):
-    almanach = _require_almanach(request, session, almanach_id)
+    almanach, _share, _user = _require_owner(request, session, almanach_id)
     db.add_to_almanach(session, almanach, rating_key, media_type, title, _as_year(year))
     return _stock_response(request, session, almanach)
 
@@ -579,7 +597,7 @@ async def almanach_remove(
     rating_key: str = Form(...),
     session: Session = Depends(db.get_session),
 ):
-    almanach = _require_almanach(request, session, almanach_id)
+    almanach, _share, _user = _require_owner(request, session, almanach_id)
     db.remove_from_almanach(session, almanach, rating_key)
     return _stock_response(request, session, almanach)
 
@@ -588,8 +606,8 @@ async def almanach_remove(
 async def almanach_preview(
     request: Request, almanach_id: int, session: Session = Depends(db.get_session)
 ):
-    almanach = _require_almanach(request, session, almanach_id)
-    preview = await run_in_threadpool(almanach_lib.build_preview, session, almanach)
+    _almanach, share, _user = _require_access(request, session, almanach_id)
+    preview = await run_in_threadpool(almanach_lib.build_preview, session, share)
     return templates.TemplateResponse(
         request, "partials/almanach_preview.html", {"preview": preview}
     )
@@ -599,18 +617,18 @@ async def almanach_preview(
 async def almanach_sync(
     request: Request, almanach_id: int, session: Session = Depends(db.get_session)
 ):
-    almanach = _require_almanach(request, session, almanach_id)
-    result = await run_in_threadpool(
-        almanach_lib.sync_almanach, session, almanach, "manual"
-    )
+    """Der Eigentümer baut für alle Profile, ein Gast nur für sich."""
+    almanach, share, user_id = _require_access(request, session, almanach_id)
+    if almanach.plex_user_id == user_id:
+        results = await run_in_threadpool(
+            almanach_lib.sync_collection, session, almanach, "manual"
+        )
+    else:
+        results = [
+            await run_in_threadpool(almanach_lib.sync_share, session, share, "manual")
+        ]
     return templates.TemplateResponse(
-        request,
-        "partials/status.html",
-        {
-            "status": result,
-            "status_title_ok": "Almanach erstellt",
-            "status_title_error": "Almanach nicht erstellt",
-        },
+        request, "partials/almanach_sync.html", {"results": results}
     )
 
 
@@ -621,8 +639,8 @@ async def almanach_share(
     profiles: list[str] = Form(default=[]),
     session: Session = Depends(db.get_session),
 ):
-    """Sammlung in andere Profile übernehmen und dort gleich bauen."""
-    almanach = _require_almanach(request, session, almanach_id)
+    """Sammlung für andere Profile freigeben und dort gleich bauen."""
+    almanach, _share, _user = _require_owner(request, session, almanach_id)
     users, _ = load_users()
     known = {user.id for user in users}
     targets = [
@@ -632,7 +650,7 @@ async def almanach_share(
     results = []
     if targets:
         results = await run_in_threadpool(
-            almanach_lib.copy_almanach_to_users, session, almanach, targets
+            almanach_lib.share_with_users, session, almanach, targets
         )
 
     return templates.TemplateResponse(
@@ -643,6 +661,34 @@ async def almanach_share(
             "share_targets": _share_targets(session, almanach, users),
             "share_results": results,
             "share_message": "" if targets else "Kein Profil gewählt.",
+            "is_owner": True,
+        },
+    )
+
+
+@app.post("/almanach/{almanach_id}/share/revoke", response_class=HTMLResponse)
+async def almanach_share_revoke(
+    request: Request,
+    almanach_id: int,
+    profile: str = Form(...),
+    session: Session = Depends(db.get_session),
+):
+    almanach, _share, _user = _require_owner(request, session, almanach_id)
+    removed = await run_in_threadpool(
+        almanach_lib.revoke_share, session, almanach, profile
+    )
+    users, _ = load_users()
+    return templates.TemplateResponse(
+        request,
+        "partials/almanach_share.html",
+        {
+            "almanach": almanach,
+            "share_targets": _share_targets(session, almanach, users),
+            "share_results": [],
+            "share_message": f"Freigabe für {profile} zurückgenommen."
+            if removed
+            else "Freigabe war nicht vorhanden.",
+            "is_owner": True,
         },
     )
 
@@ -657,7 +703,7 @@ async def almanach_cover_upload(
     cover: UploadFile = File(...),
     session: Session = Depends(db.get_session),
 ):
-    almanach = _require_almanach(request, session, almanach_id)
+    almanach, _share, _user = _require_owner(request, session, almanach_id)
     target = f"/almanach/{almanach_id}"
 
     filename, error = _store_cover(
@@ -667,44 +713,55 @@ async def almanach_cover_upload(
         return _cover_redirect(target, error=error)
 
     almanach.cover_path = filename
-    almanach.cover_applied_at = None
     session.add(almanach)
     session.commit()
+    db.reset_cover_state(session, almanach.id)
 
-    status = await run_in_threadpool(
-        _push_cover_quietly,
-        almanach.plex_user_id,
-        almanach.target_playlist_name,
-        filename,
-    )
-    if status == "uebertragen":
-        almanach.cover_applied_at = db.utcnow()
-        session.add(almanach)
-        session.commit()
+    status = await run_in_threadpool(_push_cover_to_shares, session, almanach, filename)
     return _cover_redirect(target, status=status)
+
+
+def _push_cover_to_shares(session: Session, almanach, filename: str) -> str:
+    """Cover auf die Playlists aller Profile übertragen."""
+    reached = 0
+    for share in db.list_shares(session, almanach.id):
+        try:
+            if push_cover(
+                get_gateway(), share.plex_user_id, share.target_playlist_name, filename
+            ):
+                share.cover_applied_at = db.utcnow()
+                session.add(share)
+                reached += 1
+        except Exception as exc:  # pragma: no cover - Plex kann offline sein
+            log.warning("Cover für %s nicht übertragen: %s", share.plex_user_id, exc)
+    session.commit()
+    return "uebertragen" if reached else "gespeichert"
 
 
 @app.post("/almanach/{almanach_id}/cover/delete")
 async def almanach_cover_delete(
     request: Request, almanach_id: int, session: Session = Depends(db.get_session)
 ):
-    almanach = _require_almanach(request, session, almanach_id)
+    almanach, _share, _user = _require_owner(request, session, almanach_id)
     covers.remove(covers.almanach_stem(almanach.id))
     almanach.cover_path = None
-    almanach.cover_applied_at = None
     session.add(almanach)
     session.commit()
-    await run_in_threadpool(
-        _clear_cover_quietly, almanach.plex_user_id, almanach.target_playlist_name
-    )
+    db.reset_cover_state(session, almanach.id)
+    await run_in_threadpool(_clear_cover_from_shares, session, almanach)
     return _cover_redirect(f"/almanach/{almanach_id}", status="entfernt")
+
+
+def _clear_cover_from_shares(session: Session, almanach) -> None:
+    for share in db.list_shares(session, almanach.id):
+        _clear_cover_quietly(share.plex_user_id, share.target_playlist_name)
 
 
 @app.get("/almanach/{almanach_id}/cover/image")
 async def almanach_cover_image(
     request: Request, almanach_id: int, session: Session = Depends(db.get_session)
 ):
-    almanach = _require_almanach(request, session, almanach_id)
+    almanach, _share, _user = _require_access(request, session, almanach_id)
     return _serve_cover(almanach.cover_path)
 
 
@@ -715,9 +772,11 @@ async def almanach_cover_image(
 async def almanach_reset_confirm(
     request: Request, almanach_id: int, session: Session = Depends(db.get_session)
 ):
-    """Erste Stufe: zeigt genau, was zurückgesetzt würde."""
-    almanach = _require_almanach(request, session, almanach_id)
-    plan = await run_in_threadpool(almanach_lib.plan_reset, session, almanach)
+    """Erste Stufe: zeigt genau, was für dieses Profil zurückgesetzt würde."""
+    almanach, share, _user = _require_access(request, session, almanach_id)
+    plan = await run_in_threadpool(
+        almanach_lib.plan_reset, session, share, None, almanach.name
+    )
     return templates.TemplateResponse(
         request, "partials/almanach_reset.html", {"plan": plan, "almanach": almanach}
     )
@@ -730,20 +789,22 @@ async def almanach_reset(
     confirm: str = Form(""),
     session: Session = Depends(db.get_session),
 ):
-    """Zweite Stufe: führt den Reset aus und baut die Playlist neu."""
-    almanach = _require_almanach(request, session, almanach_id)
+    """Zweite Stufe: führt den Reset aus und baut die eigene Playlist neu."""
+    almanach, share, _user = _require_access(request, session, almanach_id)
     if confirm != "ja":
-        plan = await run_in_threadpool(almanach_lib.plan_reset, session, almanach)
+        plan = await run_in_threadpool(
+            almanach_lib.plan_reset, session, share, None, almanach.name
+        )
         return templates.TemplateResponse(
             request, "partials/almanach_reset.html", {"plan": plan, "almanach": almanach}
         )
 
-    result = await run_in_threadpool(almanach_lib.reset_watch_state, session, almanach)
+    result = await run_in_threadpool(
+        almanach_lib.reset_watch_state, session, share, None, almanach.name
+    )
     sync = None
     if result.ok:
-        sync = await run_in_threadpool(
-            almanach_lib.sync_almanach, session, almanach, "reset"
-        )
+        sync = await run_in_threadpool(almanach_lib.sync_share, session, share, "reset")
     return templates.TemplateResponse(
         request,
         "partials/almanach_reset_done.html",

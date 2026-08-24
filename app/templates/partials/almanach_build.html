@@ -4,6 +4,8 @@
       hx-post="/almanach/{{ almanach.id }}/sync" hx-target="#almanach-status"
       hx-swap="innerHTML" hx-indicator="#build-flux" hx-disabled-elt="find button">
   <button class="btn-launch" type="submit" {% if not entries %}disabled{% endif %}>
-    Almanach erstellen
+    {%- if is_owner and shares and shares|length > 1 %}
+      Playlists für {{ shares|length }} Profile erstellen
+    {%- else %}Almanach erstellen{% endif %}
   </button>
 </form>

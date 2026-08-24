@@ -1,5 +1,5 @@
-{# Sammlung in andere Profile übernehmen. Die Kopie gehört dem Zielprofil und
-   wird gegen dessen eigenen Watch-Status gebaut. #}
+{# Freigaben verwalten. Freigeben legt keine Kopie an: der Inhalt bleibt einer,
+   jedes Profil bekommt nur seine eigene Playlist. #}
 {% if share_message %}
   <div class="notice muted">{{ share_message }}</div>
 {% endif %}
@@ -10,9 +10,7 @@
   {% else %}
     <div class="notice ok">
       <strong>{{ result.user_id }}:</strong>
-      {%- if result.created %} Sammlung angelegt mit {{ result.total }} Einträgen.
-      {%- elif result.added %} {{ result.added }} Eintrag/Einträge ergänzt (jetzt {{ result.total }}).
-      {%- else %} war bereits vollständig ({{ result.total }} Einträge).{% endif %}
+      {%- if result.added %} freigegeben.{% else %} war bereits freigegeben.{% endif %}
       {%- if result.sync %}
         {% if result.sync.ok %} {{ result.sync.message }}
         {% else %} <span class="cell-sub">Playlist nicht gebaut: {{ result.sync.error }}</span>
@@ -32,24 +30,35 @@
       hx-disabled-elt="find button">
   <div class="profile-list">
     {% for target in share_targets %}
-      <label class="profile-option">
-        <input type="checkbox" name="profiles" value="{{ target.user.id }}">
-        <span class="profile-name">{{ target.user.label }}</span>
-        <span class="cell-sub">
-          {%- if target.exists %}hat die Sammlung bereits ({{ target.count }} Einträge)
-          {%- else %}noch nicht vorhanden{% endif %}
-        </span>
-      </label>
+      <div class="profile-option">
+        {% if target.shared %}
+          <span class="profile-flag">✓</span>
+          <span class="profile-name">{{ target.user.label }}</span>
+          <span class="cell-sub">freigegeben – eigene Playlist, eigener Fortschritt</span>
+          <button class="btn-ban" type="button" title="Freigabe zurücknehmen"
+                  hx-post="/almanach/{{ almanach.id }}/share/revoke"
+                  hx-target="#share-zone"
+                  hx-swap="innerHTML"
+                  hx-vals='{{ {"profile": target.user.id}|tojson }}'
+                  hx-confirm="Freigabe für {{ target.user.title }} zurücknehmen? Die Playlist dieses Profils wird entfernt.">&#10005;</button>
+        {% else %}
+          <label class="profile-pick">
+            <input type="checkbox" name="profiles" value="{{ target.user.id }}">
+            <span class="profile-name">{{ target.user.label }}</span>
+            <span class="cell-sub">nicht freigegeben</span>
+          </label>
+        {% endif %}
+      </div>
     {% endfor %}
   </div>
 
-  <button class="btn-week primary" type="submit">In gewählte Profile übernehmen</button>
+  <button class="btn-week primary" type="submit">Für gewählte Profile freigeben</button>
 </form>
 
 <p class="cell-sub" style="margin-bottom:0">
-  Jedes Profil bekommt eine eigene Sammlung samt eigener Playlist, gebaut aus
-  seinem eigenen Watch-Status. Spätere Änderungen hier wandern nicht von selbst
-  mit – dafür einfach erneut übernehmen, dann werden nur die fehlenden Titel
-  ergänzt.
+  Der Inhalt bleibt einer: Nimmst du hier später Titel auf oder heraus, gilt das
+  sofort für alle freigegebenen Profile. Nur der Fortschritt ist persönlich –
+  jedes Profil bekommt seine eigene Playlist mit dem, was es selbst noch nicht
+  gesehen hat.
 </p>
 {% endif %}

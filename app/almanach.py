@@ -95,6 +95,7 @@ def search_titles(
     session: Session,
     almanach: db.Almanach,
     query: str,
+    user_id: str,
     gateway: Optional[PlexGateway] = None,
     limit: int = SEARCH_LIMIT,
 ) -> SearchResult:
@@ -105,7 +106,7 @@ def search_titles(
 
     gateway = gateway or get_gateway()
     try:
-        server = gateway.connect_as(almanach.plex_user_id)
+        server = gateway.connect_as(user_id)
         movies = gateway.movie_section(server).search(
             title=query, libtype="movie", maxresults=limit
         )
@@ -177,18 +178,22 @@ def collect_almanach_items(
 
 def build_preview(
     session: Session,
-    almanach: db.Almanach,
+    share: db.AlmanachShare,
     gateway: Optional[PlexGateway] = None,
     limit: Optional[int] = None,
 ) -> PreviewResult:
-    """Vorschau der Almanach-Playlist – ohne etwas in Plex zu verändern."""
-    entries = db.list_almanach_entries(session, almanach.id)
+    """Vorschau der Playlist eines Profils – ohne etwas in Plex zu verändern.
+
+    Der Inhalt ist gemeinsam, der Watch-Status nicht: die Vorschau zeigt, was
+    *dieses* Profil noch nicht gesehen hat.
+    """
+    entries = db.list_almanach_entries(session, share.almanach_id)
     if not entries:
         return PreviewResult()
 
     gateway = gateway or get_gateway()
     try:
-        server = gateway.connect_as(almanach.plex_user_id)
+        server = gateway.connect_as(share.plex_user_id)
         items, missing = collect_almanach_items(server, entries)
     except PlexUnavailable as exc:
         return PreviewResult(error=str(exc))
@@ -215,16 +220,24 @@ def build_preview(
 # ---------------------------------------------------------------------------
 
 
-def sync_almanach(
+def sync_share(
     session: Session,
-    almanach: db.Almanach,
+    share: db.AlmanachShare,
     trigger: str = "manual",
     gateway: Optional[PlexGateway] = None,
 ) -> SyncResult:
-    """Playlist eines benannten Almanachs neu aufbauen."""
+    """Die Playlist eines Profils neu aufbauen.
+
+    Der Inhalt kommt aus der gemeinsamen Sammlung, gefiltert wird er gegen den
+    Watch-Status genau dieses Profils.
+    """
     gateway = gateway or get_gateway()
-    user_id = almanach.plex_user_id
-    playlist_name = almanach.target_playlist_name or get_settings().almanach_playlist_name_for(
+    user_id = share.plex_user_id
+    almanach = session.get(db.Almanach, share.almanach_id)
+    if almanach is None:
+        return SyncResult(user_id=user_id, trigger=trigger, error="Sammlung nicht gefunden.")
+
+    playlist_name = share.target_playlist_name or get_settings().almanach_playlist_name_for(
         user_id, almanach.name
     )
     entries = db.list_almanach_entries(session, almanach.id)
@@ -243,7 +256,7 @@ def sync_almanach(
         items, missing = collect_almanach_items(server, entries)
         outcome = apply_playlist(server, playlist_name, [i.plex_object for i in items])
         cover_done = apply_cover_after_sync(
-            outcome, almanach.cover_path, almanach.cover_applied_at is not None
+            outcome, almanach.cover_path, share.cover_applied_at is not None
         )
     except PlexUnavailable as exc:
         return SyncResult(
@@ -258,12 +271,12 @@ def sync_almanach(
             error=f"Unerwarteter Fehler: {exc}",
         )
 
-    almanach.last_synced_at = db.utcnow()
-    almanach.last_item_count = len(items)
-    almanach.target_playlist_name = playlist_name
+    share.last_synced_at = db.utcnow()
+    share.last_item_count = len(items)
+    share.target_playlist_name = playlist_name
     if cover_done:
-        almanach.cover_applied_at = db.utcnow()
-    session.add(almanach)
+        share.cover_applied_at = db.utcnow()
+    session.add(share)
     session.commit()
 
     note = almanach.name
@@ -276,9 +289,7 @@ def sync_almanach(
     if outcome.exists:
         message = f"{len(items)} ungesehene Titel in »{playlist_name}« gespeichert."
     else:
-        message = (
-            f"Alles gesehen – »{playlist_name}« wurde geleert bzw. entfernt."
-        )
+        message = f"Alles gesehen – »{playlist_name}« wurde geleert bzw. entfernt."
     if missing:
         message += f" ({', '.join(missing)} nicht mehr in der Bibliothek)"
 
@@ -291,29 +302,42 @@ def sync_almanach(
     )
 
 
+def sync_collection(
+    session: Session,
+    almanach: db.Almanach,
+    trigger: str = "manual",
+    gateway: Optional[PlexGateway] = None,
+) -> list[SyncResult]:
+    """Alle Playlists einer Sammlung bauen – für jedes freigegebene Profil eine."""
+    return [
+        sync_share(session, share, trigger=trigger, gateway=gateway)
+        for share in db.list_shares(session, almanach.id)
+    ]
+
+
 def sync_all_almanachs(
     session: Session, trigger: str = "poll", gateway: Optional[PlexGateway] = None
 ) -> list[SyncResult]:
-    """Jeden gefüllten Almanach nachziehen (Scheduler/Webhook)."""
+    """Jede Playlist zu einer gefüllten Sammlung nachziehen (Scheduler/Webhook)."""
     return [
-        sync_almanach(session, almanach, trigger=trigger, gateway=gateway)
-        for almanach in db.almanachs_with_entries(session)
+        sync_share(session, share, trigger=trigger, gateway=gateway)
+        for share, _almanach in db.shares_with_entries(session)
     ]
 
 
 def rename_playlist(
-    almanach: db.Almanach, old_name: str, gateway: Optional[PlexGateway] = None
+    share: db.AlmanachShare, old_name: str, gateway: Optional[PlexGateway] = None
 ) -> bool:
     """Die vorhandene Plex-Playlist mit umbenennen.
 
     Sonst bliebe die alte Playlist unter dem alten Namen liegen und der nächste
     Sync legte eine zweite an.
     """
-    new_name = almanach.target_playlist_name
+    new_name = share.target_playlist_name
     if not old_name or old_name == new_name:
         return False
     gateway = gateway or get_gateway()
-    server = gateway.connect_as(almanach.plex_user_id)
+    server = gateway.connect_as(share.plex_user_id)
     for playlist in server.playlists():
         if playlist.title == old_name:
             playlist.editTitle(new_name)
@@ -321,14 +345,14 @@ def rename_playlist(
     return False
 
 
-def delete_playlist(almanach: db.Almanach, gateway: Optional[PlexGateway] = None) -> bool:
-    """Die Plex-Playlist eines Almanachs entfernen (beim Löschen der Sammlung)."""
-    if not almanach.target_playlist_name:
+def delete_playlist(share: db.AlmanachShare, gateway: Optional[PlexGateway] = None) -> bool:
+    """Die Plex-Playlist einer Freigabe entfernen."""
+    if not share.target_playlist_name:
         return False
     gateway = gateway or get_gateway()
-    server = gateway.connect_as(almanach.plex_user_id)
+    server = gateway.connect_as(share.plex_user_id)
     for playlist in server.playlists():
-        if playlist.title == almanach.target_playlist_name:
+        if playlist.title == share.target_playlist_name:
             playlist.delete()
             return True
     return False
@@ -340,13 +364,11 @@ def delete_playlist(almanach: db.Almanach, gateway: Optional[PlexGateway] = None
 
 
 @dataclass
-class CopyResult:
-    """Was beim Übernehmen in ein Profil herauskam."""
+class ShareResult:
+    """Was beim Freigeben an ein Profil herauskam."""
 
     user_id: str
-    created: bool = False
-    added: int = 0
-    total: int = 0
+    added: bool = False
     sync: Optional[SyncResult] = None
     error: str = ""
 
@@ -354,82 +376,58 @@ class CopyResult:
     def ok(self) -> bool:
         return not self.error
 
-    @property
-    def unchanged(self) -> bool:
-        return self.ok and not self.created and self.added == 0
 
-
-def copy_almanach(
+def share_with_users(
     session: Session,
-    source: db.Almanach,
-    target_user_id: str,
-    gateway: Optional[PlexGateway] = None,
-    build: bool = True,
-) -> CopyResult:
-    """Sammlung in das Profil eines anderen Home-Users übernehmen.
-
-    Die Kopie gehört dem Zielprofil und wird deshalb gegen dessen eigenen
-    Watch-Status gebaut – jeder sieht in seiner Playlist nur, was er selbst
-    noch nicht gesehen hat.
-
-    Existiert dort bereits eine Sammlung gleichen Namens, wird sie ergänzt
-    statt eine zweite anzulegen. Ein erneutes Übernehmen gleicht also nur die
-    fehlenden Titel nach.
-    """
-    if target_user_id == source.plex_user_id:
-        return CopyResult(
-            user_id=target_user_id, error="Die Sammlung gehört diesem Profil bereits."
-        )
-
-    target = db.find_almanach_by_name(session, target_user_id, source.name)
-    created = target is None
-    if target is None:
-        target = db.create_almanach(session, target_user_id, source.name)
-        if source.cover_path:
-            target.cover_path = covers.copy(
-                source.cover_path, covers.almanach_stem(target.id)
-            )
-            target.cover_applied_at = None
-            session.add(target)
-            session.commit()
-
-    present = db.almanach_keys(session, target.id)
-    added = 0
-    for entry in db.list_almanach_entries(session, source.id):
-        if entry.plex_rating_key in present:
-            continue
-        db.add_to_almanach(
-            session,
-            target,
-            entry.plex_rating_key,
-            entry.media_type,
-            entry.title,
-            entry.year,
-        )
-        added += 1
-
-    result = CopyResult(
-        user_id=target_user_id,
-        created=created,
-        added=added,
-        total=len(db.list_almanach_entries(session, target.id)),
-    )
-    if build:
-        result.sync = sync_almanach(session, target, trigger="kopie", gateway=gateway)
-    return result
-
-
-def copy_almanach_to_users(
-    session: Session,
-    source: db.Almanach,
+    almanach: db.Almanach,
     target_user_ids: Iterable[str],
     gateway: Optional[PlexGateway] = None,
     build: bool = True,
-) -> list[CopyResult]:
-    return [
-        copy_almanach(session, source, user_id, gateway=gateway, build=build)
-        for user_id in target_user_ids
-    ]
+) -> list[ShareResult]:
+    """Sammlung für weitere Profile freigeben.
+
+    Freigeben legt keine Kopie an: der Inhalt bleibt einer. Jedes Profil
+    bekommt nur seine eigene Playlist, gebaut gegen seinen eigenen
+    Watch-Status. Ändert der Eigentümer den Inhalt, gilt das sofort für alle.
+    """
+    results: list[ShareResult] = []
+    for user_id in target_user_ids:
+        if user_id == almanach.plex_user_id:
+            results.append(
+                ShareResult(
+                    user_id=user_id,
+                    error="Die Sammlung gehört diesem Profil bereits.",
+                )
+            )
+            continue
+
+        already = db.get_share(session, almanach.id, user_id) is not None
+        share = db.get_or_create_share(session, almanach, user_id)
+        result = ShareResult(user_id=user_id, added=not already)
+        if build:
+            result.sync = sync_share(session, share, trigger="freigabe", gateway=gateway)
+        results.append(result)
+    return results
+
+
+def revoke_share(
+    session: Session,
+    almanach: db.Almanach,
+    user_id: str,
+    gateway: Optional[PlexGateway] = None,
+) -> bool:
+    """Freigabe zurücknehmen und die Playlist dieses Profils entfernen."""
+    if user_id == almanach.plex_user_id:
+        return False  # der Eigentümer bleibt immer drin
+    share = db.get_share(session, almanach.id, user_id)
+    if share is None:
+        return False
+    try:
+        delete_playlist(share, gateway=gateway)
+    except Exception as exc:  # pragma: no cover - Plex kann offline sein
+        log.warning("Playlist von %s nicht entfernt: %s", user_id, exc)
+    db.remove_share(session, almanach.id, user_id)
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -489,17 +487,20 @@ def _plan_for_entry(obj: Any) -> tuple[int, int, int, int]:
 
 
 def plan_reset(
-    session: Session, almanach: db.Almanach, gateway: Optional[PlexGateway] = None
+    session: Session,
+    share: db.AlmanachShare,
+    gateway: Optional[PlexGateway] = None,
+    name: str = "",
 ) -> ResetPlan:
-    """Zählen, was ein Reset zurücksetzen würde – verändert nichts."""
-    entries = db.list_almanach_entries(session, almanach.id)
+    """Zählen, was ein Reset für dieses Profil zurücksetzen würde."""
+    entries = db.list_almanach_entries(session, share.almanach_id)
     if not entries:
-        return ResetPlan(error=f"»{almanach.name}« ist leer – nichts zurückzusetzen.")
+        return ResetPlan(error=f"»{name}« ist leer – nichts zurückzusetzen.")
 
     gateway = gateway or get_gateway()
     plan = ResetPlan()
     try:
-        server = gateway.connect_as(almanach.plex_user_id)
+        server = gateway.connect_as(share.plex_user_id)
         for entry in entries:
             try:
                 obj = server.fetchItem(int(entry.plex_rating_key))
@@ -521,21 +522,26 @@ def plan_reset(
 
 
 def reset_watch_state(
-    session: Session, almanach: db.Almanach, gateway: Optional[PlexGateway] = None
+    session: Session,
+    share: db.AlmanachShare,
+    gateway: Optional[PlexGateway] = None,
+    name: str = "",
 ) -> ResetResult:
-    """Alle Filme und Episoden des Almanachs auf »ungesehen« setzen.
+    """Alle Filme und Episoden der Sammlung für *dieses* Profil auf
+    »ungesehen« setzen.
 
     Serien werden in einem Rutsch zurückgesetzt (``markUnplayed`` auf der Serie
-    wirkt auf alle Episoden); gezählt wird, was vorher als gesehen galt.
+    wirkt auf alle Episoden); gezählt wird, was vorher als gesehen galt. Andere
+    Profile bleiben unberührt – ihr Fortschritt gehört ihnen.
     """
-    entries = db.list_almanach_entries(session, almanach.id)
+    entries = db.list_almanach_entries(session, share.almanach_id)
     if not entries:
-        return ResetResult(error=f"»{almanach.name}« ist leer – nichts zurückzusetzen.")
+        return ResetResult(error=f"»{name}« ist leer – nichts zurückzusetzen.")
 
     gateway = gateway or get_gateway()
     result = ResetResult()
     try:
-        server = gateway.connect_as(almanach.plex_user_id)
+        server = gateway.connect_as(share.plex_user_id)
         for entry in entries:
             try:
                 obj = server.fetchItem(int(entry.plex_rating_key))
@@ -557,7 +563,7 @@ def reset_watch_state(
         "Watch-Status zurückgesetzt: %s Filme, %s Episoden (Almanach »%s«, Nutzer %s)",
         result.movies,
         result.episodes,
-        almanach.name,
-        almanach.plex_user_id,
+        name,
+        share.plex_user_id,
     )
     return result

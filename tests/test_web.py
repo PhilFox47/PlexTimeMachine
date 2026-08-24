@@ -276,7 +276,8 @@ def test_creating_a_collection_leads_to_its_page(client, session):
     created = db.list_almanachs(session, "Alex")[0]
     assert created.name == "Achtziger"
     assert response.headers["location"] == f"/almanach/{created.id}"
-    assert created.target_playlist_name == "Plex Almanach – Alex · Achtziger"
+    share = db.get_share(session, created.id, "Alex")
+    assert share.target_playlist_name == "Plex Almanach – Alex · Achtziger"
 
 
 def test_detail_page_shows_name_and_search(client, almanach):
@@ -348,7 +349,7 @@ def test_almanach_sync_builds_playlist(client, session, gateway, almanach):
 
     response = client.post(f"/almanach/{almanach.id}/sync")
 
-    assert "Almanach erstellt" in response.text
+    assert "Alex" in response.text and "ungesehene Titel" in response.text
     playlist = gateway.server.playlists()[0]
     assert playlist.title == "Plex Almanach – Alex · Star Wars"
     assert len(playlist.items()) == 2
@@ -357,7 +358,7 @@ def test_almanach_sync_builds_playlist(client, session, gateway, almanach):
 def test_almanach_sync_without_entries_reports_error(client, almanach):
     response = client.post(f"/almanach/{almanach.id}/sync")
 
-    assert "Almanach nicht erstellt" in response.text and "leer" in response.text
+    assert "leer" in response.text
 
 
 def test_rename_and_delete_a_collection(client, session, almanach, gateway):
@@ -487,7 +488,7 @@ def test_cover_upload_reaches_plex_and_is_shown(client, session, gateway, almana
     session.expire_all()
     stored = db.get_almanach(session, "Alex", almanach.id)
     assert stored.cover_path == f"almanach-{almanach.id}.png"
-    assert stored.cover_applied_at is not None
+    assert db.get_share(session, almanach.id, "Alex").cover_applied_at is not None
 
     # Die Vorschau liefert genau das hochgeladene Bild aus.
     image = client.get(f"/almanach/{almanach.id}/cover/image")
@@ -506,7 +507,8 @@ def test_cover_upload_without_playlist_is_kept_for_later(client, session, almana
     assert response.headers["location"] == f"/almanach/{almanach.id}?cover=gespeichert"
     session.expire_all()
     stored = db.get_almanach(session, "Alex", almanach.id)
-    assert stored.cover_path and stored.cover_applied_at is None
+    assert stored.cover_path
+    assert db.get_share(session, almanach.id, "Alex").cover_applied_at is None
 
 
 def test_cover_upload_rejects_non_images(client, session, almanach):
@@ -602,30 +604,84 @@ def test_share_panel_lists_the_other_profiles(client, almanach):
     # Nur die Auswahlkästchen betrachten – "Alex" steht auch im Nutzer-Umschalter.
     assert 'name="profiles" value="Nina"' in body
     assert 'name="profiles" value="Alex"' not in body   # der Eigentümer nicht
-    assert "noch nicht vorhanden" in body
+    assert "nicht freigegeben" in body
 
 
-def test_share_copies_the_collection_and_builds_it(client, session, gateway, almanach):
+def test_share_gives_the_other_profile_its_own_playlist(client, session, gateway, almanach):
     db.add_to_almanach(session, almanach, "100", "show", "Knight Rider")
 
     response = client.post(f"/almanach/{almanach.id}/share", data={"profiles": ["Nina"]})
 
     assert response.status_code == 200
-    assert "Sammlung angelegt mit 1 Einträgen" in response.text
+    assert "freigegeben" in response.text
     assert "Plex Almanach – Nina · Star Wars" in response.text
 
-    kopie = db.list_almanachs(session, "Nina")[0]
-    assert db.almanach_keys(session, kopie.id) == {"100"}
-    assert [p.title for p in gateway.server.playlists()] == ["Plex Almanach – Nina · Star Wars"]
+    # Eine Sammlung, zwei Playlists – keine Kopie des Inhalts.
+    assert len(db.list_almanachs(session, "Alex")) == 1
+    assert sorted(s.plex_user_id for s in db.list_shares(session, almanach.id)) == ["Alex", "Nina"]
 
 
-def test_share_panel_shows_existing_copies(client, session, almanach):
+def test_shared_profile_sees_the_collection_read_only(client, session, gateway, almanach):
+    db.add_to_almanach(session, almanach, "100", "show", "Knight Rider")
+    client.post(f"/almanach/{almanach.id}/share", data={"profiles": ["Nina"]})
+
+    client.post("/user/select", data={"user": "Nina"})
+    body = client.get(f"/almanach/{almanach.id}").text
+
+    assert "Freigegeben von" in body and "Alex" in body
+    assert "Knight Rider" in body                  # Inhalt sichtbar
+    assert 'name="q"' not in body                  # aber keine Suche
+    assert "Almanach löschen" not in body          # und kein Löschen
+
+    # Schreibende Zugriffe sind für das Gastprofil gesperrt.
+    assert client.post(
+        f"/almanach/{almanach.id}/add",
+        data={"rating_key": "1", "media_type": "movie", "title": "Fremd"},
+    ).status_code == 403
+    assert client.post(
+        f"/almanach/{almanach.id}/rename", data={"name": "Umbenannt"}
+    ).status_code == 403
+    assert client.post(f"/almanach/{almanach.id}/delete").status_code == 403
+    assert db.almanach_keys(session, almanach.id) == {"100"}
+
+
+def test_content_change_reaches_the_shared_profile(client, session, gateway, almanach):
+    """Der Eigentümer ändert den Inhalt – die andere Playlist zieht mit."""
+    db.add_to_almanach(session, almanach, "2", "movie", "Brazil")
+    client.post(f"/almanach/{almanach.id}/share", data={"profiles": ["Nina"]})
+    assert db.get_share(session, almanach.id, "Nina").last_item_count == 1
+
+    client.post(
+        f"/almanach/{almanach.id}/add",
+        data={"rating_key": "100", "media_type": "show", "title": "Knight Rider"},
+    )
+    response = client.post(f"/almanach/{almanach.id}/sync")
+
+    assert "Alex" in response.text and "Nina" in response.text  # baut für beide
+    session.expire_all()
+    assert db.get_share(session, almanach.id, "Nina").last_item_count == 3
+
+
+def test_revoking_a_share_removes_access(client, session, gateway, almanach):
+    db.add_to_almanach(session, almanach, "2", "movie", "Brazil")
+    client.post(f"/almanach/{almanach.id}/share", data={"profiles": ["Nina"]})
+
+    response = client.post(
+        f"/almanach/{almanach.id}/share/revoke", data={"profile": "Nina"}
+    )
+
+    assert "zurückgenommen" in response.text
+    assert db.get_share(session, almanach.id, "Nina") is None
+    assert db.list_almanachs(session, "Nina") == []
+
+
+def test_share_panel_marks_existing_shares(client, session, almanach):
     db.add_to_almanach(session, almanach, "100", "show", "Knight Rider")
     client.post(f"/almanach/{almanach.id}/share", data={"profiles": ["Nina"]})
 
     body = client.get(f"/almanach/{almanach.id}").text
 
-    assert "hat die Sammlung bereits (1 Einträge)" in body
+    assert "freigegeben – eigene Playlist" in body
 
 
 def test_share_without_a_profile_says_so(client, almanach):

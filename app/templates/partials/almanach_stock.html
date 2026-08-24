@@ -1,7 +1,8 @@
 {# Aufgenommene Serien und Filme eines Almanachs #}
 {% if not entries %}
   <div class="empty">
-    Noch nichts aufgenommen – oben suchen und mit „+“ in den Almanach legen.
+    {% if is_owner %}Noch nichts aufgenommen – oben suchen und mit „+“ in den Almanach legen.
+    {% else %}Diese Sammlung ist noch leer.{% endif %}
   </div>
 {% else %}
   <div class="stats">
@@ -33,11 +34,13 @@
             {{ 'Serie' if entry.is_show else 'Film' }}</span></td>
           <td class="mono">{{ entry.added_at|de_datetime }}</td>
           <td class="list-actions">
+            {% if is_owner %}
             <button class="btn-ban" title="Aus dem Almanach entfernen"
                     hx-post="/almanach/{{ almanach.id }}/remove"
                     hx-target="#almanach-stock"
                     hx-swap="innerHTML"
                     hx-vals='{{ {"rating_key": entry.plex_rating_key}|tojson }}'>&#10005;</button>
+            {% endif %}
           </td>
         </tr>
       {% endfor %}
