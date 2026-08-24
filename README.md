@@ -6,15 +6,21 @@ dauerhaft auf die Blacklist setzen – und per Knopfdruck **eine feste, dauerhaf
 gepflegte Playlist** aktualisieren. Keine neue Playlist pro Suche.
 
 ```
-   01.01.1982  ▶▶  31.12.1986
-   ────────────────────────────
-   7 Treffer · 5 Filme · 2 Episoden · 2 geblockt
+   MO 31.01.2000  ▶▶  MO 07.02.2000
+   ─────────────────────────────────
+   3 Treffer · 2 Filme · 1 Episode · 0 geblockt
+   ◀ Woche zurück   Woche ausrichten   Nächste Woche ▶
 ```
 
 ## Was es macht
 
 - **Ein aktueller Zeitraum pro Reisendem** – jederzeit über die UI änderbar,
-  keine Profil-Verwaltung.
+  keine Profil-Verwaltung. Der zuletzt gewählte Zeitraum wird gemerkt und beim
+  nächsten Aufruf wieder geladen.
+- **Wochenweises Durchgehen** – „Nächste Woche" schiebt den Zeitraum um genau
+  sieben Tage weiter, ohne den Zuschnitt zu verändern.
+- **Wochentag an jedem Datum** – zweibuchstabig (`Mo`, `Di`, … `So`) in
+  Zeit-Display, Vorschau, Blacklist und Logbuch.
 - **Blacklist pro Nutzer** – wirkt dauerhaft auf alle künftigen Zeitreisen.
   Bei Serien wird die ganze Serie ausgeschlossen (über `grandparentRatingKey`).
 - **Eine feste Playlist pro Plex-Nutzer** – wird bei jeder Zeitreise geleert und
@@ -101,8 +107,9 @@ periodische Polling da.
 
 ## Bedienung
 
-1. **Cockpit** – Zeitraum über die Datumsfelder oder die Jahrzehnt-Presets
-   wählen. Die Vorschau lädt live, ohne etwas in Plex zu verändern.
+1. **Cockpit** – Zeitraum über die Datumsfelder, die Wochenschritte oder die
+   Jahrzehnt-Presets wählen. Die Vorschau lädt live, ohne etwas in Plex zu
+   verändern.
 2. **Blacklist** – das ⊘-Symbol in einer Zeile schließt Film bzw. Serie dauerhaft
    aus; die Vorschau aktualisiert sich sofort. Verwalten und freigeben unter
    *Blacklist*.
@@ -111,12 +118,34 @@ periodische Polling da.
 4. **Reisender** – der Umschalter oben wechselt den Home-User-Kontext
    (Vorschau, Blacklist, Playlist und Logbuch sind pro Nutzer getrennt).
 
+### Wochenweise durch die Zeit
+
+Für den typischen Ablauf „eine Woche nach der anderen“ gibt es drei Knöpfe:
+
+| Knopf | Wirkung |
+|---|---|
+| **◀ Woche zurück** | Start *und* Ende sieben Tage früher |
+| **Woche ausrichten** | setzt den Zeitraum auf Montag–Montag der Startwoche |
+| **Nächste Woche ▶** | Start *und* Ende sieben Tage später |
+
+Verschoben wird immer um exakt sieben Tage – die Länge des Zeitraums und die
+Wochentage bleiben also erhalten. Aus `Mo 31.01.2000 – Mo 07.02.2000` wird
+`Mo 07.02.2000 – Mo 14.02.2000`. Jeder Schritt speichert den neuen Zeitraum
+sofort, sodass die nächste Sitzung dort weitermacht, wo die letzte aufgehört
+hat.
+
+Der Zuschnitt Montag-bis-Montag hat beide Ränder inklusive: ein Titel, der
+genau auf den gemeinsamen Montag fällt, taucht in beiden Wochen auf. Wer das
+nicht möchte, setzt das Ende einen Tag früher (Montag–Sonntag) – die
+Wochenschritte übernehmen diesen Zuschnitt dann unverändert.
+
 ## Architektur
 
 ```
 app/
 ├── main.py          FastAPI: Seiten, htmx-Fragmente, Webhook, Thumb-Proxy
 ├── config.py        Settings aus Env-Variablen
+├── formatting.py    Deutsche Datumsformate, Wochentage, Wochenrechnung
 ├── db.py            SQLModel/SQLite: UserState, BlacklistEntry, JourneyLog
 ├── plex_client.py   plexapi-Wrapper inkl. Home-User-Impersonation
 ├── sync_engine.py   Suche, Blacklist-Filter, Merge/Sort, Playlist-Pflege
@@ -164,8 +193,9 @@ pytest -q
 
 Die Suite deckt Suche, Sortierung, Blacklist-Logik, Playlist-Pflege (inkl.
 Leeren, Nachfüllen in Blöcken und dem Fall, dass Plex eine leer geräumte
-Playlist selbst entfernt), Scheduler-Entprellung und alle HTTP-Endpunkte gegen
-ein Plex-Double ab – ein echter Plex-Server wird dafür nicht gebraucht.
+Playlist selbst entfernt), Wochenrechnung und Wochentagsanzeige,
+Scheduler-Entprellung und alle HTTP-Endpunkte gegen ein Plex-Double ab –
+ein echter Plex-Server wird dafür nicht gebraucht.
 
 ## Sicherheitshinweis
 
@@ -178,3 +208,4 @@ Authentifizierung davorsetzen und `PTM_WEBHOOK_TOKEN` setzen.
 - Friends-Accounts (eigener Plex-Login) statt nur Home-User
 - Blacklist auf Episoden-Ebene statt nur ganze Serien/Filme
 - Historie zuletzt genutzter Zeiträume als Schnellauswahl
+  (aktuell wird nur der jeweils letzte Zeitraum gemerkt)

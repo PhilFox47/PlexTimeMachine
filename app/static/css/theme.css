@@ -193,6 +193,54 @@ select:focus, input:focus {
 
 .digits .sep { opacity: 0.4; }
 
+.digits .weekday {
+  font-size: 0.5em;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  opacity: 0.75;
+  margin-right: 0.6em;
+  vertical-align: 0.45em;
+}
+
+/* --- Wochen-Navigation --- */
+
+.week-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.week-nav .nav-label {
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-right: 4px;
+}
+
+.btn-week {
+  background: var(--bg-panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 14px;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+}
+
+.btn-week:hover { border-color: var(--teal-dim); color: var(--teal); }
+
+.btn-week.primary {
+  border-color: var(--amber-dim);
+  color: var(--amber);
+  background: rgba(255, 176, 32, 0.08);
+}
+
+.btn-week.primary:hover { background: rgba(255, 176, 32, 0.16); box-shadow: var(--glow-amber); }
+
 .time-arrow {
   font-size: 22px;
   color: var(--amber-dim);

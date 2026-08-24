@@ -17,10 +17,10 @@
       <tbody>
       {% for journey in journeys %}
         <tr>
-          <td class="cell-date">{{ journey.executed_at.strftime('%d.%m.%Y %H:%M') }}</td>
+          <td class="cell-date">{{ journey.executed_at|de_datetime }}</td>
           <td class="mono">
             {% if journey.date_start and journey.date_end %}
-              {{ journey.date_start.strftime('%d.%m.%Y') }} – {{ journey.date_end.strftime('%d.%m.%Y') }}
+              {{ (journey.date_start, journey.date_end)|de_period }}
             {% else %}—{% endif %}
           </td>
           <td class="cell-title">{{ journey.item_count }}</td>

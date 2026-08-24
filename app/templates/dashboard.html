@@ -10,12 +10,12 @@
   <div class="time-circuits">
     <div class="readout start">
       <div class="caption">Zielzeit ab</div>
-      <div class="digits" id="digits-start">{{ start.strftime('%d') }}<span class="sep">.</span>{{ start.strftime('%m') }}<span class="sep">.</span>{{ start.strftime('%Y') }}</div>
+      <div class="digits" id="digits-start"><span class="weekday">{{ start|weekday }}</span>{{ start.strftime('%d') }}<span class="sep">.</span>{{ start.strftime('%m') }}<span class="sep">.</span>{{ start.strftime('%Y') }}</div>
     </div>
     <div class="time-arrow">&#9654;&#9654;</div>
     <div class="readout end">
       <div class="caption">Zielzeit bis</div>
-      <div class="digits" id="digits-end">{{ end.strftime('%d') }}<span class="sep">.</span>{{ end.strftime('%m') }}<span class="sep">.</span>{{ end.strftime('%Y') }}</div>
+      <div class="digits" id="digits-end"><span class="weekday">{{ end|weekday }}</span>{{ end.strftime('%d') }}<span class="sep">.</span>{{ end.strftime('%m') }}<span class="sep">.</span>{{ end.strftime('%Y') }}</div>
     </div>
   </div>
 
@@ -36,6 +36,18 @@
     </div>
     <button class="btn" type="submit">Vorschau aktualisieren</button>
   </form>
+
+  <div class="week-nav">
+    <span class="nav-label">Wochenschritt</span>
+    <button type="button" class="btn-week" data-shift="-1" title="Zeitraum eine Woche zurück">
+      &#9664; Woche zurück
+    </button>
+    <button type="button" class="btn-week" id="snap-week"
+            title="Zeitraum auf Montag–Montag der Startwoche setzen">Woche ausrichten</button>
+    <button type="button" class="btn-week primary" data-shift="1" title="Zeitraum eine Woche weiter">
+      Nächste Woche &#9654;
+    </button>
+  </div>
 
   <div class="presets" id="presets">
     {% for label, from_year, to_year in [
@@ -69,7 +81,7 @@
 
   {% if state and state.last_synced_at %}
   <div class="notice muted">
-    Letzte Zeitreise: {{ state.last_synced_at.strftime('%d.%m.%Y %H:%M') }} UTC ·
+    Letzte Zeitreise: {{ state.last_synced_at|de_datetime }} UTC ·
     {{ state.last_item_count }} Titel in »{{ state.target_playlist_name }}«
   </div>
   {% endif %}
@@ -99,11 +111,24 @@
     const startInput = document.getElementById('start');
     const endInput = document.getElementById('end');
 
+    // Reihenfolge passt zu Date.getUTCDay() (0 = Sonntag) und spiegelt
+    // WEEKDAYS_SHORT aus app/formatting.py.
+    const WEEKDAYS = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+
+    function parse(value) {
+      // Als UTC lesen, damit Sommerzeit die Tagesgrenze nicht verschiebt.
+      return value ? new Date(value + 'T00:00:00Z') : null;
+    }
+    function toValue(date) {
+      return date.toISOString().slice(0, 10);
+    }
     function render(input, target) {
       const el = document.getElementById(target);
-      if (!el || !input.value) return;
+      const date = parse(input.value);
+      if (!el || !date) return;
       const [y, m, d] = input.value.split('-');
-      el.innerHTML = d + '<span class="sep">.</span>' + m + '<span class="sep">.</span>' + y;
+      el.innerHTML = '<span class="weekday">' + WEEKDAYS[date.getUTCDay()] + '</span>' +
+        d + '<span class="sep">.</span>' + m + '<span class="sep">.</span>' + y;
     }
     function refresh() {
       render(startInput, 'digits-start');
@@ -113,13 +138,40 @@
     startInput.addEventListener('input', refresh);
     endInput.addEventListener('input', refresh);
 
+    function applyPeriod(startDate, endDate) {
+      startInput.value = toValue(startDate);
+      endInput.value = toValue(endDate);
+      refresh();
+      form.requestSubmit();   // speichert den Zeitraum und laedt die Vorschau
+    }
+
+    document.querySelector('.week-nav').addEventListener('click', function (event) {
+      const shiftButton = event.target.closest('button[data-shift]');
+      if (shiftButton) {
+        const start = parse(startInput.value);
+        const end = parse(endInput.value);
+        if (!start || !end) return;
+        const days = 7 * Number(shiftButton.dataset.shift);
+        start.setUTCDate(start.getUTCDate() + days);
+        end.setUTCDate(end.getUTCDate() + days);
+        applyPeriod(start, end);
+        return;
+      }
+      if (event.target.closest('#snap-week')) {
+        const start = parse(startInput.value);
+        if (!start) return;
+        const monday = new Date(start);
+        monday.setUTCDate(monday.getUTCDate() - ((start.getUTCDay() + 6) % 7));
+        const nextMonday = new Date(monday);
+        nextMonday.setUTCDate(monday.getUTCDate() + 7);
+        applyPeriod(monday, nextMonday);
+      }
+    });
+
     document.getElementById('presets').addEventListener('click', function (event) {
       const button = event.target.closest('button[data-start]');
       if (!button) return;
-      startInput.value = button.dataset.start;
-      endInput.value = button.dataset.end;
-      refresh();
-      form.requestSubmit();
+      applyPeriod(parse(button.dataset.start), parse(button.dataset.end));
     });
 
     refresh();

@@ -189,3 +189,63 @@ def test_healthz(client):
 
     assert body["status"] == "ok"
     assert "version" in body
+
+
+# ---------------------------------------------------------------------------
+# Wochenschritte und Wochentagsanzeige
+# ---------------------------------------------------------------------------
+
+
+def test_preview_shows_weekday_next_to_date(client):
+    response = client.post("/period", data={"start": "2000-01-31", "end": "2000-02-07"})
+
+    assert "Mi 02.02.2000" in response.text  # Magnolia, Mittwoch
+
+
+def test_dashboard_restores_remembered_period(client):
+    """Der zuletzt gewählte Zeitraum überlebt den Seitenwechsel."""
+    client.post("/period", data={"start": "2000-01-31", "end": "2000-02-07"})
+
+    body = client.get("/").text
+
+    assert 'value="2000-01-31"' in body and 'value="2000-02-07"' in body
+    assert body.count('<span class="weekday">Mo</span>') == 2  # beide Zeit-Displays
+    assert "Magnolia" in body  # Vorschau wird direkt mitgeladen
+
+
+def test_dashboard_offers_week_stepping(client):
+    body = client.get("/").text
+
+    assert 'data-shift="1"' in body and "Nächste Woche" in body
+    assert 'data-shift="-1"' in body
+    assert 'id="snap-week"' in body
+
+
+def test_default_period_for_new_user_is_a_week():
+    from app.main import default_period
+
+    start, end = default_period()
+
+    assert start.weekday() == end.weekday() == 0  # Montag bis Montag
+    assert (end - start).days == 7
+
+
+def test_logbook_shows_weekdays(client, session):
+    import datetime
+
+    db.set_period(session, "Alex", datetime.date(2000, 1, 31), datetime.date(2000, 2, 7))
+    client.post("/sync")
+
+    body = client.get("/logbook").text
+
+    assert "Mo 31.01.2000 – Mo 07.02.2000" in body
+
+
+def test_blacklist_page_shows_weekday(client, session):
+    db.add_to_blacklist(session, "Alex", "100", "show", "Knight Rider")
+
+    body = client.get("/blacklist").text
+    entry = db.list_blacklist(session, "Alex")[0]
+
+    assert entry.added_at.strftime("%d.%m.%Y") in body
+    assert any(day in body for day in ("Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"))

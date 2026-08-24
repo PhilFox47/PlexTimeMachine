@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -19,6 +19,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app import __version__, db
 from app.config import get_settings
+from app.formatting import format_date, format_datetime, format_period, week_of, weekday_short
 from app.plex_client import HomeUser, PlexUnavailable, get_gateway
 from app.scheduler import SyncScheduler, get_scheduler, set_scheduler
 from app.sync_engine import PreviewResult, SyncResult, build_preview, sync_user
@@ -52,6 +53,10 @@ BASE_DIR = Path(__file__).resolve().parent
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 templates.env.globals["version"] = __version__
+templates.env.filters["de_date"] = format_date
+templates.env.filters["de_datetime"] = format_datetime
+templates.env.filters["de_period"] = lambda pair: format_period(*pair)
+templates.env.filters["weekday"] = weekday_short
 
 
 # ---------------------------------------------------------------------------
@@ -91,9 +96,12 @@ def parse_period(start: str, end: str) -> tuple[Optional[date], Optional[date], 
 
 
 def default_period() -> tuple[date, date]:
-    """Vorbelegung für Erstnutzer: das Jahrzehnt vor 40 Jahren."""
-    decade = ((date.today().year - 40) // 10) * 10
-    return date(decade, 1, 1), date(decade + 9, 12, 31)
+    """Vorbelegung für Erstnutzer: die Woche vor 40 Jahren.
+
+    Sobald einmal ein Zeitraum gespeichert wurde, gewinnt immer der gemerkte
+    Zeitraum aus dem ``UserState``.
+    """
+    return week_of(date.today() - timedelta(days=365 * 40))
 
 
 def dashboard_context(

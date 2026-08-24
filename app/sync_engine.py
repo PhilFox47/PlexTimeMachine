@@ -11,6 +11,7 @@ from sqlmodel import Session
 
 from app import db
 from app.config import get_settings
+from app.formatting import format_date
 from app.plex_client import PlexGateway, PlexUnavailable, get_gateway
 
 log = logging.getLogger(__name__)
@@ -60,7 +61,7 @@ class PreviewItem:
 
     @property
     def air_date_display(self) -> str:
-        return self.air_date.strftime("%d.%m.%Y") if self.air_date else "—"
+        return format_date(self.air_date)
 
     @property
     def sort_key(self) -> tuple:

@@ -26,7 +26,7 @@
           <td><span class="badge {{ 'episode' if entry.is_show else 'movie' }}">
             {{ 'Serie' if entry.is_show else 'Film' }}</span></td>
           <td class="mono">{{ entry.plex_rating_key }}</td>
-          <td class="mono">{{ entry.added_at.strftime('%d.%m.%Y %H:%M') }}</td>
+          <td class="mono">{{ entry.added_at|de_datetime }}</td>
           <td class="list-actions">
             <form class="inline-form" method="post" action="/blacklist/remove">
               <input type="hidden" name="rating_key" value="{{ entry.plex_rating_key }}">

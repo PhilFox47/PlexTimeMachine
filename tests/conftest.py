@@ -176,6 +176,7 @@ def plex_data() -> dict[str, list[Any]]:
         FakeMovie(1, "Zurück in die Zukunft", "1985-07-03"),
         FakeMovie(2, "Brazil", "1985-02-22"),
         FakeMovie(3, "Matrix", "1999-03-31"),
+        FakeMovie(4, "Magnolia", "2000-02-02"),
     ]
     episodes = [
         FakeEpisode(11, 100, "Knight Rider", "Pilot", "1985-09-20", 1, 1),
