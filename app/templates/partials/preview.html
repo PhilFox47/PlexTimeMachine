@@ -1,0 +1,73 @@
+{# Vorschau-Tabelle – wird per htmx ausgetauscht #}
+{% if preview is none %}
+  <div class="empty">Zeitraum wählen, um die Vorschau zu laden.</div>
+{% elif not preview.ok %}
+  <div class="notice error">{{ preview.error }}</div>
+{% elif preview.total == 0 %}
+  <div class="empty">
+    Keine ungesehenen Titel in diesem Zeitraum.
+    {% if preview.blacklisted %}({{ preview.blacklisted }} durch die Blacklist ausgeschlossen){% endif %}
+  </div>
+{% else %}
+  <div class="stats">
+    <div class="stat"><div class="value">{{ preview.total }}</div><div class="label">Treffer</div></div>
+    <div class="stat"><div class="value">{{ preview.movies }}</div><div class="label">Filme</div></div>
+    <div class="stat"><div class="value">{{ preview.episodes }}</div><div class="label">Episoden</div></div>
+    <div class="stat"><div class="value">{{ preview.blacklisted }}</div><div class="label">Geblockt</div></div>
+  </div>
+
+  {% if preview.truncated %}
+  <div class="notice muted">
+    Anzeige auf {{ preview.items|length }} von {{ preview.total }} Titeln begrenzt –
+    die Zeitreise nimmt trotzdem alle {{ preview.total }} in die Playlist auf.
+  </div>
+  {% endif %}
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th></th><th>Titel</th><th>Erscheinungsdatum</th><th>Typ</th><th>Länge</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for item in preview.items %}
+        <tr>
+          <td>
+            {% if item.thumb %}
+              <img class="poster" loading="lazy" alt="" src="/thumb?path={{ item.thumb|urlencode }}">
+            {% else %}
+              <div class="poster-fallback">?</div>
+            {% endif %}
+          </td>
+          <td>
+            <div class="cell-title">{{ item.title }}</div>
+            {% if item.is_episode %}
+              <div class="cell-sub">
+                {{ item.series_title }}
+                {%- if item.season is not none and item.episode is not none %} · S{{ '%02d'|format(item.season) }}E{{ '%02d'|format(item.episode) }}{% endif %}
+              </div>
+            {% elif item.year %}
+              <div class="cell-sub">{{ item.year }}</div>
+            {% endif %}
+          </td>
+          <td class="cell-date">{{ item.air_date_display }}</td>
+          <td><span class="badge {{ item.media_type }}">{{ 'Serie' if item.is_episode else 'Film' }}</span></td>
+          <td class="cell-sub">{% if item.duration_minutes %}{{ item.duration_minutes }} min{% else %}—{% endif %}</td>
+          <td class="list-actions">
+            <button class="btn-ban"
+                    title="{{ 'Serie' if item.is_episode else 'Film' }} dauerhaft ausschließen"
+                    hx-post="/blacklist/add"
+                    hx-target="#preview"
+                    hx-swap="innerHTML"
+                    hx-include="#period-form"
+                    hx-vals='{{ {"rating_key": item.blacklist_key, "media_type": item.blacklist_type, "title": item.series_title if item.is_episode else item.title}|tojson }}'>
+              &#8856;
+            </button>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endif %}

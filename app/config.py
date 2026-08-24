@@ -1,0 +1,45 @@
+"""Konfiguration aus Umgebungsvariablen (Prefix ``PTM_``)."""
+
+from __future__ import annotations
+
+from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="PTM_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # --- Plex -------------------------------------------------------------
+    plex_baseurl: str = "http://localhost:32400"
+    plex_token: str = ""
+    movie_library: str = "Filme"
+    tv_library: str = "Serien"
+    playlist_name_template: str = "Plex Time Machine – {user}"
+
+    # --- Automatisierung --------------------------------------------------
+    poll_interval_minutes: int = 30
+    webhook_debounce_seconds: int = 20
+    webhook_token: str = ""
+
+    # --- Persistenz / UI --------------------------------------------------
+    database_url: str = "sqlite:///./data/plex_time_machine.db"
+    preview_limit: int = 400
+
+    @property
+    def configured(self) -> bool:
+        """True, sobald ein Token hinterlegt ist – sonst läuft die UI im Demo-Modus."""
+        return bool(self.plex_token and self.plex_baseurl)
+
+    def playlist_name_for(self, user: str) -> str:
+        return self.playlist_name_template.format(user=user)
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()

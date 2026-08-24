@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% set page = 'dashboard' %}
+{% block title %}Cockpit · Plex Time Machine{% endblock %}
+
+{% block content %}
+
+<section class="panel">
+  <h2>Ziel-Zeit</h2>
+
+  <div class="time-circuits">
+    <div class="readout start">
+      <div class="caption">Zielzeit ab</div>
+      <div class="digits" id="digits-start">{{ start.strftime('%d') }}<span class="sep">.</span>{{ start.strftime('%m') }}<span class="sep">.</span>{{ start.strftime('%Y') }}</div>
+    </div>
+    <div class="time-arrow">&#9654;&#9654;</div>
+    <div class="readout end">
+      <div class="caption">Zielzeit bis</div>
+      <div class="digits" id="digits-end">{{ end.strftime('%d') }}<span class="sep">.</span>{{ end.strftime('%m') }}<span class="sep">.</span>{{ end.strftime('%Y') }}</div>
+    </div>
+  </div>
+
+  <form id="period-form"
+        class="date-inputs"
+        hx-post="/period"
+        hx-target="#preview"
+        hx-swap="innerHTML"
+        hx-indicator="#preview-flux"
+        hx-trigger="submit, change delay:250ms">
+    <div class="field">
+      <label for="start">Start</label>
+      <input type="date" id="start" name="start" value="{{ start.isoformat() }}" required>
+    </div>
+    <div class="field">
+      <label for="end">Ende</label>
+      <input type="date" id="end" name="end" value="{{ end.isoformat() }}" required>
+    </div>
+    <button class="btn" type="submit">Vorschau aktualisieren</button>
+  </form>
+
+  <div class="presets" id="presets">
+    {% for label, from_year, to_year in [
+        ('60er', 1960, 1969), ('70er', 1970, 1979), ('80er', 1980, 1989),
+        ('90er', 1990, 1999), ('2000er', 2000, 2009), ('2010er', 2010, 2019)] %}
+      <button type="button" class="btn-preset"
+              data-start="{{ from_year }}-01-01" data-end="{{ to_year }}-12-31">{{ label }}</button>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Vorschau · ungesehen{% if current_user %} für {{ current_user }}{% endif %}</h2>
+
+  <div id="preview-flux" class="flux">
+    <div class="flux-bar"></div>
+    <div class="flux-text">Scanne den Zeitstrom …</div>
+  </div>
+
+  <div id="preview">
+    {% include "partials/preview.html" %}
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Abflug</h2>
+
+  <div id="status">
+    {% include "partials/status.html" %}
+  </div>
+
+  {% if state and state.last_synced_at %}
+  <div class="notice muted">
+    Letzte Zeitreise: {{ state.last_synced_at.strftime('%d.%m.%Y %H:%M') }} UTC ·
+    {{ state.last_item_count }} Titel in »{{ state.target_playlist_name }}«
+  </div>
+  {% endif %}
+
+  <form hx-post="/sync" hx-target="#status" hx-swap="innerHTML" hx-indicator="#launch-flux"
+        hx-disabled-elt="find button">
+    <button class="btn-launch" type="submit" {% if not users %}disabled{% endif %}>
+      Zeitreise starten
+    </button>
+  </form>
+
+  <div id="launch-flux" class="flux">
+    <div class="flux-bar"></div>
+    <div class="flux-text">Beschleunige auf Reisegeschwindigkeit …</div>
+  </div>
+
+  <p class="cell-sub" style="margin-bottom:0">
+    Die Vorschau ist unverbindlich – erst dieser Knopf schreibt die Auswahl in die
+    feste Playlist{% if state and state.target_playlist_name %} »{{ state.target_playlist_name }}«{% endif %}.
+  </p>
+</section>
+
+<script>
+  // LED-Anzeige an die Datumsfelder koppeln + Jahrzehnt-Presets.
+  (function () {
+    const form = document.getElementById('period-form');
+    const startInput = document.getElementById('start');
+    const endInput = document.getElementById('end');
+
+    function render(input, target) {
+      const el = document.getElementById(target);
+      if (!el || !input.value) return;
+      const [y, m, d] = input.value.split('-');
+      el.innerHTML = d + '<span class="sep">.</span>' + m + '<span class="sep">.</span>' + y;
+    }
+    function refresh() {
+      render(startInput, 'digits-start');
+      render(endInput, 'digits-end');
+    }
+
+    startInput.addEventListener('input', refresh);
+    endInput.addEventListener('input', refresh);
+
+    document.getElementById('presets').addEventListener('click', function (event) {
+      const button = event.target.closest('button[data-start]');
+      if (!button) return;
+      startInput.value = button.dataset.start;
+      endInput.value = button.dataset.end;
+      refresh();
+      form.requestSubmit();
+    });
+
+    refresh();
+  })();
+</script>
+{% endblock %}

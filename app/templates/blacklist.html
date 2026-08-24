@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% set page = 'blacklist' %}
+{% block title %}Blacklist · Plex Time Machine{% endblock %}
+
+{% block content %}
+<section class="panel">
+  <h2>Blacklist{% if current_user %} · {{ current_user }}{% endif %}</h2>
+
+  <p class="cell-sub">
+    Geblockte Titel tauchen in keiner Zeitreise mehr auf – dauerhaft und nur für
+    diesen Reisenden. Bei Serien wird die komplette Serie ausgeschlossen.
+  </p>
+
+  {% if not blacklist %}
+    <div class="empty">Noch nichts geblockt. Alles darf mitreisen.</div>
+  {% else %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Titel</th><th>Typ</th><th>Plex-ID</th><th>Geblockt am</th><th></th></tr>
+      </thead>
+      <tbody>
+      {% for entry in blacklist %}
+        <tr>
+          <td class="cell-title">{{ entry.title or '(ohne Titel)' }}</td>
+          <td><span class="badge {{ 'episode' if entry.is_show else 'movie' }}">
+            {{ 'Serie' if entry.is_show else 'Film' }}</span></td>
+          <td class="mono">{{ entry.plex_rating_key }}</td>
+          <td class="mono">{{ entry.added_at.strftime('%d.%m.%Y %H:%M') }}</td>
+          <td class="list-actions">
+            <form class="inline-form" method="post" action="/blacklist/remove">
+              <input type="hidden" name="rating_key" value="{{ entry.plex_rating_key }}">
+              <button class="btn" type="submit">Freigeben</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="cell-sub">
+    Freigegebene Titel erscheinen ab der nächsten Vorschau wieder; die Playlist
+    ändert sich beim nächsten Sync.
+  </p>
+  {% endif %}
+</section>
+{% endblock %}

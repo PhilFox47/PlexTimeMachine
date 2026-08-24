@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% set page = 'logbook' %}
+{% block title %}Logbuch · Plex Time Machine{% endblock %}
+
+{% block content %}
+<section class="panel">
+  <h2>Reise-Logbuch{% if current_user %} · {{ current_user }}{% endif %}</h2>
+
+  {% if not journeys %}
+    <div class="empty">Noch keine Zeitreise unternommen.</div>
+  {% else %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Ausgeführt</th><th>Zeitraum</th><th>Titel</th><th>Auslöser</th><th>Notiz</th></tr>
+      </thead>
+      <tbody>
+      {% for journey in journeys %}
+        <tr>
+          <td class="cell-date">{{ journey.executed_at.strftime('%d.%m.%Y %H:%M') }}</td>
+          <td class="mono">
+            {% if journey.date_start and journey.date_end %}
+              {{ journey.date_start.strftime('%d.%m.%Y') }} – {{ journey.date_end.strftime('%d.%m.%Y') }}
+            {% else %}—{% endif %}
+          </td>
+          <td class="cell-title">{{ journey.item_count }}</td>
+          <td><span class="badge {{ 'movie' if journey.trigger == 'manual' else 'episode' }}">{{ journey.trigger }}</span></td>
+          <td class="cell-sub">{{ journey.note or '—' }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

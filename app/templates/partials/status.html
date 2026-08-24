@@ -1,0 +1,11 @@
+{# Ergebnis der Zeitreise #}
+{% if status is none %}
+{% elif status.ok %}
+  <div class="notice ok">
+    <strong>Zeitreise abgeschlossen.</strong> {{ status.message }}
+  </div>
+{% else %}
+  <div class="notice error">
+    <strong>Zeitreise abgebrochen.</strong> {{ status.error }}
+  </div>
+{% endif %}

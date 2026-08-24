@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+
+# Runtime state
+data/*
+!data/.gitkeep
+*.db
+*.db-journal
+*.sqlite3
+
+# Environment
+.env

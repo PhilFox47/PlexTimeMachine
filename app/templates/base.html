@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Plex Time Machine{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Share+Tech+Mono&display=swap">
+  <link rel="stylesheet" href="/static/css/theme.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#9201;</text></svg>">
+  <script src="/static/js/htmx.min.js" defer></script>
+</head>
+<body>
+<div class="shell">
+
+  <header class="topbar">
+    <h1 class="brand">Plex Time Machine<small>Temporal Playlist Control</small></h1>
+
+    {% if users %}
+    <form class="user-switch" method="post" action="/user/select">
+      <label for="user">Reisender</label>
+      <select id="user" name="user" onchange="this.form.submit()">
+        {% for u in users %}
+        <option value="{{ u.id }}" {% if u.id == current_user %}selected{% endif %}>{{ u.label }}</option>
+        {% endfor %}
+      </select>
+      <noscript><button class="btn" type="submit">Wechseln</button></noscript>
+    </form>
+    {% endif %}
+
+    <nav class="nav">
+      <a href="/" {% if page == 'dashboard' %}class="active"{% endif %}>Cockpit</a>
+      <a href="/blacklist" {% if page == 'blacklist' %}class="active"{% endif %}>Blacklist</a>
+      <a href="/logbook" {% if page == 'logbook' %}class="active"{% endif %}>Logbuch</a>
+    </nav>
+  </header>
+
+  {% if user_error %}
+  <div class="notice error">
+    <strong>Keine Verbindung zu Plex.</strong> {{ user_error }}
+  </div>
+  {% endif %}
+
+  {% block content %}{% endblock %}
+
+  <footer class="footer">
+    <span>Plex Time Machine v{{ version }}</span>
+    {% if state and state.target_playlist_name %}<span>Ziel-Playlist: {{ state.target_playlist_name }}</span>{% endif %}
+    {% if settings.poll_interval_minutes %}
+      <span>Polling alle {{ settings.poll_interval_minutes }} min{% if next_poll_at %} · nächster Lauf {{ next_poll_at.strftime('%H:%M') }} UTC{% endif %}</span>
+    {% else %}
+      <span>Polling deaktiviert</span>
+    {% endif %}
+  </footer>
+
+</div>
+</body>
+</html>
