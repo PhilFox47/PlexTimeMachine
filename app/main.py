@@ -10,14 +10,15 @@ from pathlib import Path
 from typing import Optional
 
 import requests
-from fastapi import Depends, FastAPI, Form, Query, Request, Response
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session
 from starlette.concurrency import run_in_threadpool
 
-from app import __version__, almanach, db
+from app import __version__, db
+from app import almanach as almanach_lib
 from app.config import get_settings
 from app.formatting import format_date, format_datetime, format_period, week_of, weekday_short
 from app.plex_client import HomeUser, PlexUnavailable, get_gateway
@@ -135,10 +136,7 @@ def dashboard_context(
         "preview": preview,
         "status": status,
         "blacklist": db.list_blacklist(session, user_id) if user_id else [],
-        "almanach": db.list_almanach(session, user_id) if user_id else [],
-        "almanach_state": db.get_or_create_almanach_state(session, user_id)
-        if user_id
-        else None,
+        "almanachs": db.list_almanachs(session, user_id) if user_id else [],
         "journeys": db.list_journeys(session, user_id) if user_id else [],
         "next_poll_at": scheduler.next_poll_at if scheduler else None,
     }
@@ -291,88 +289,166 @@ async def start_journey(request: Request, session: Session = Depends(db.get_sess
 # ---------------------------------------------------------------------------
 
 
+def _require_almanach(request: Request, session: Session, almanach_id: int):
+    """Almanach des aktuell gewählten Nutzers laden – sonst 404."""
+    users, _ = load_users()
+    user_id = resolve_user(request, users)
+    almanach = db.get_almanach(session, user_id, almanach_id) if user_id else None
+    if almanach is None:
+        raise HTTPException(status_code=404, detail="Almanach nicht gefunden")
+    return almanach
+
+
+def _detail_context(request: Request, session: Session, almanach) -> dict:
+    context = dashboard_context(request, session)
+    context["almanach"] = almanach
+    context["entries"] = db.list_almanach_entries(session, almanach.id)
+    return context
+
+
 @app.get("/almanach", response_class=HTMLResponse)
-async def almanach_page(request: Request, session: Session = Depends(db.get_session)):
+async def almanach_overview(request: Request, session: Session = Depends(db.get_session)):
     return templates.TemplateResponse(
         request, "almanach.html", dashboard_context(request, session)
     )
 
 
-@app.get("/almanach/search", response_class=HTMLResponse)
-async def almanach_search(
+@app.post("/almanach/new")
+async def almanach_new(
     request: Request,
-    q: str = Query(""),
+    name: str = Form(...),
     session: Session = Depends(db.get_session),
 ):
     users, _ = load_users()
     user_id = resolve_user(request, users)
-    result = await run_in_threadpool(almanach.search_titles, session, user_id, q)
+    if not user_id:
+        return RedirectResponse("/almanach", status_code=303)
+    almanach = db.create_almanach(session, user_id, name)
+    return RedirectResponse(f"/almanach/{almanach.id}", status_code=303)
+
+
+@app.get("/almanach/{almanach_id}", response_class=HTMLResponse)
+async def almanach_detail(
+    request: Request, almanach_id: int, session: Session = Depends(db.get_session)
+):
+    almanach = _require_almanach(request, session, almanach_id)
     return templates.TemplateResponse(
-        request, "partials/almanach_search.html", {"search": result}
+        request, "almanach_detail.html", _detail_context(request, session, almanach)
     )
 
 
-def _stock_response(request: Request, session: Session, user_id: str) -> HTMLResponse:
+@app.post("/almanach/{almanach_id}/rename")
+async def almanach_rename(
+    request: Request,
+    almanach_id: int,
+    name: str = Form(...),
+    session: Session = Depends(db.get_session),
+):
+    almanach = _require_almanach(request, session, almanach_id)
+    old_playlist_name = almanach.target_playlist_name
+    db.rename_almanach(session, almanach, name)
+    await run_in_threadpool(_rename_playlist_quietly, almanach, old_playlist_name)
+    return RedirectResponse(f"/almanach/{almanach_id}", status_code=303)
+
+
+def _rename_playlist_quietly(almanach, old_playlist_name: str) -> None:
+    """Plex-Playlist nachbenennen; scheitert das, baut der nächste Sync sie neu."""
+    try:
+        almanach_lib.rename_playlist(almanach, old_playlist_name)
+    except Exception as exc:  # pragma: no cover - Plex kann offline sein
+        log.warning("Playlist »%s« nicht umbenannt: %s", old_playlist_name, exc)
+
+
+@app.post("/almanach/{almanach_id}/delete")
+async def almanach_delete(
+    request: Request, almanach_id: int, session: Session = Depends(db.get_session)
+):
+    almanach = _require_almanach(request, session, almanach_id)
+    await run_in_threadpool(_delete_playlist_quietly, almanach)
+    db.delete_almanach(session, almanach)
+    return RedirectResponse("/almanach", status_code=303)
+
+
+def _delete_playlist_quietly(almanach) -> None:
+    """Zugehörige Plex-Playlist mit entfernen – Fehler sind nicht kritisch."""
+    try:
+        almanach_lib.delete_playlist(almanach)
+    except Exception as exc:  # pragma: no cover - Plex kann offline sein
+        log.warning("Playlist zu »%s« nicht entfernt: %s", almanach.name, exc)
+
+
+@app.get("/almanach/{almanach_id}/search", response_class=HTMLResponse)
+async def almanach_search(
+    request: Request,
+    almanach_id: int,
+    q: str = Query(""),
+    session: Session = Depends(db.get_session),
+):
+    almanach = _require_almanach(request, session, almanach_id)
+    result = await run_in_threadpool(almanach_lib.search_titles, session, almanach, q)
+    return templates.TemplateResponse(
+        request, "partials/almanach_search.html", {"search": result, "almanach": almanach}
+    )
+
+
+def _stock_response(request: Request, session: Session, almanach) -> HTMLResponse:
     """Bestandsliste neu rendern – reine Datenbankarbeit, daher schnell."""
     return templates.TemplateResponse(
         request,
         "partials/almanach_stock.html",
         {
-            "almanach": db.list_almanach(session, user_id),
-            "almanach_state": db.get_or_create_almanach_state(session, user_id),
+            "almanach": almanach,
+            "entries": db.list_almanach_entries(session, almanach.id),
         },
     )
 
 
-@app.post("/almanach/add", response_class=HTMLResponse)
+@app.post("/almanach/{almanach_id}/add", response_class=HTMLResponse)
 async def almanach_add(
     request: Request,
+    almanach_id: int,
     rating_key: str = Form(...),
     media_type: str = Form("movie"),
     title: str = Form(""),
     year: str = Form(""),
     session: Session = Depends(db.get_session),
 ):
-    users, _ = load_users()
-    user_id = resolve_user(request, users)
-    db.add_to_almanach(
-        session, user_id, rating_key, media_type, title, _as_year(year)
-    )
-    return _stock_response(request, session, user_id)
+    almanach = _require_almanach(request, session, almanach_id)
+    db.add_to_almanach(session, almanach, rating_key, media_type, title, _as_year(year))
+    return _stock_response(request, session, almanach)
 
 
-@app.post("/almanach/remove", response_class=HTMLResponse)
+@app.post("/almanach/{almanach_id}/remove", response_class=HTMLResponse)
 async def almanach_remove(
     request: Request,
+    almanach_id: int,
     rating_key: str = Form(...),
     session: Session = Depends(db.get_session),
 ):
-    users, _ = load_users()
-    user_id = resolve_user(request, users)
-    db.remove_from_almanach(session, user_id, rating_key)
-    return _stock_response(request, session, user_id)
+    almanach = _require_almanach(request, session, almanach_id)
+    db.remove_from_almanach(session, almanach, rating_key)
+    return _stock_response(request, session, almanach)
 
 
-@app.get("/almanach/preview", response_class=HTMLResponse)
-async def almanach_preview(request: Request, session: Session = Depends(db.get_session)):
-    users, _ = load_users()
-    user_id = resolve_user(request, users)
-    preview = await run_in_threadpool(almanach.build_preview, session, user_id)
+@app.get("/almanach/{almanach_id}/preview", response_class=HTMLResponse)
+async def almanach_preview(
+    request: Request, almanach_id: int, session: Session = Depends(db.get_session)
+):
+    almanach = _require_almanach(request, session, almanach_id)
+    preview = await run_in_threadpool(almanach_lib.build_preview, session, almanach)
     return templates.TemplateResponse(
         request, "partials/almanach_preview.html", {"preview": preview}
     )
 
 
-@app.post("/almanach/sync", response_class=HTMLResponse)
-async def almanach_sync(request: Request, session: Session = Depends(db.get_session)):
-    users, user_error = load_users()
-    user_id = resolve_user(request, users)
-    if not user_id:
-        result = SyncResult(user_id="", error=user_error or "Kein Nutzer gewählt.")
-    else:
-        result = await run_in_threadpool(
-            almanach.sync_almanach, session, user_id, "manual"
-        )
+@app.post("/almanach/{almanach_id}/sync", response_class=HTMLResponse)
+async def almanach_sync(
+    request: Request, almanach_id: int, session: Session = Depends(db.get_session)
+):
+    almanach = _require_almanach(request, session, almanach_id)
+    result = await run_in_threadpool(
+        almanach_lib.sync_almanach, session, almanach, "manual"
+    )
     return templates.TemplateResponse(
         request,
         "partials/status.html",
@@ -384,7 +460,52 @@ async def almanach_sync(request: Request, session: Session = Depends(db.get_sess
     )
 
 
+# --- Watch-Status zurücksetzen: erst zeigen, dann bestätigen --------------
+
+
+@app.get("/almanach/{almanach_id}/reset", response_class=HTMLResponse)
+async def almanach_reset_confirm(
+    request: Request, almanach_id: int, session: Session = Depends(db.get_session)
+):
+    """Erste Stufe: zeigt genau, was zurückgesetzt würde."""
+    almanach = _require_almanach(request, session, almanach_id)
+    plan = await run_in_threadpool(almanach_lib.plan_reset, session, almanach)
+    return templates.TemplateResponse(
+        request, "partials/almanach_reset.html", {"plan": plan, "almanach": almanach}
+    )
+
+
+@app.post("/almanach/{almanach_id}/reset", response_class=HTMLResponse)
+async def almanach_reset(
+    request: Request,
+    almanach_id: int,
+    confirm: str = Form(""),
+    session: Session = Depends(db.get_session),
+):
+    """Zweite Stufe: führt den Reset aus und baut die Playlist neu."""
+    almanach = _require_almanach(request, session, almanach_id)
+    if confirm != "ja":
+        plan = await run_in_threadpool(almanach_lib.plan_reset, session, almanach)
+        return templates.TemplateResponse(
+            request, "partials/almanach_reset.html", {"plan": plan, "almanach": almanach}
+        )
+
+    result = await run_in_threadpool(almanach_lib.reset_watch_state, session, almanach)
+    sync = None
+    if result.ok:
+        sync = await run_in_threadpool(
+            almanach_lib.sync_almanach, session, almanach, "reset"
+        )
+    return templates.TemplateResponse(
+        request,
+        "partials/almanach_reset_done.html",
+        {"result": result, "sync": sync, "almanach": almanach},
+    )
+
+
 # ---------------------------------------------------------------------------
+# Webhook + Service-Endpunkte
+# ---------------------------------------------------------------------------# ---------------------------------------------------------------------------
 # Webhook + Service-Endpunkte
 # ---------------------------------------------------------------------------
 

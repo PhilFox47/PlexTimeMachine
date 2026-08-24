@@ -4,9 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Plex Time Machine{% endblock %}</title>
+  {# Die Google-Schriften sind Kür: ohne Internet würde ein blockierendes
+     <link> den Seitenaufbau aufhalten. Deshalb wird es erst nach dem Laden
+     aktiv geschaltet – bis dahin greift der Monospace-Fallback. #}
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet"
+  <link rel="stylesheet" media="print" onload="this.media='all'; this.onload=null"
         href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Share+Tech+Mono&display=swap">
   <link rel="stylesheet" href="/static/css/theme.css">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#9201;</text></svg>">

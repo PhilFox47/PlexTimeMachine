@@ -29,9 +29,11 @@ gepflegte Playlist** aktualisieren. Keine neue Playlist pro Suche.
   jeweiligen Home-Users (siehe [Multi-User](#multi-user-und-watched-status)).
 - **Automatisches Nachziehen** – periodisches Polling plus optionaler
   Plex-Webhook, damit gesehene Titel zeitnah aus der Playlist fallen.
-- **Almanach** – gezielt gesuchte Serien und Filme (z. B. ein ganzes Franchise) als
-  zweite Playlist in Release-Order, ebenfalls nur ungesehen und automatisch
-  nachgezogen.
+- **Almanachs** – beliebig viele benannte Sammlungen aus gesuchten Serien und
+  Filmen (z. B. je ein Franchise), jede mit eigener Playlist in Release-Order,
+  jederzeit erweiterbar und ebenfalls automatisch nachgezogen.
+- **Watch-Status zurücksetzen** – ein Almanach lässt sich komplett auf
+  „ungesehen“ setzen, um ihn von vorn zu schauen (zweistufige Rückfrage).
 - **Logbuch** – jeder Lauf mit Art, Zeitraum, Auslöser und Trefferzahl.
 
 ## Multi-User und Watched-Status
@@ -46,8 +48,8 @@ Plex Time Machine – Alex
 Plex Time Machine – Nina
 ```
 
-Für den Almanach gilt dasselbe – jede Person bekommt zusätzlich
-`Plex Almanach – <Name>`.
+Für Almanachs gilt dasselbe – jede Sammlung bekommt ihre eigene Playlist,
+z. B. `Plex Almanach – Alex · Star Wars`.
 
 Der Admin-Token holt sich für jeden Home-User über plex.tv einen
 server-spezifischen Token (`MyPlexUser.get_token`). Suche *und* Playlist laufen
@@ -92,7 +94,7 @@ Alle Einstellungen kommen aus Umgebungsvariablen mit dem Präfix `PTM_`
 | `PTM_MOVIE_LIBRARY` | `Filme` | Name der Film-Bibliothek |
 | `PTM_TV_LIBRARY` | `Serien` | Name der Serien-Bibliothek |
 | `PTM_PLAYLIST_NAME_TEMPLATE` | `Plex Time Machine – {user}` | `{user}` wird durch den Home-User ersetzt |
-| `PTM_ALMANACH_PLAYLIST_NAME_TEMPLATE` | `Plex Almanach – {user}` | Name der Almanach-Playlist |
+| `PTM_ALMANACH_PLAYLIST_NAME_TEMPLATE` | `Plex Almanach – {user} · {name}` | Name der Almanach-Playlists (`{name}` = Name der Sammlung) |
 | `PTM_POLL_INTERVAL_MINUTES` | `30` | Periodisches Nachziehen; `0` schaltet es ab |
 | `PTM_WEBHOOK_DEBOUNCE_SECONDS` | `20` | Sammelfenster für Webhook-Events |
 | `PTM_WEBHOOK_TOKEN` | – | Optionales Geheimnis für `/webhook/plex?token=…` |
@@ -125,32 +127,58 @@ periodische Polling da.
 4. **Reisender** – der Umschalter oben wechselt den Home-User-Kontext
    (Vorschau, Blacklist, Playlist und Logbuch sind pro Nutzer getrennt).
 
-### Almanach: Serien und Filme gezielt sammeln
+### Almanachs: Serien und Filme gezielt sammeln
 
 Der Reiter **Almanach** ist die zweite Betriebsart – statt eines Zeitraums
-stellst du hier eine Liste zusammen:
+stellst du hier benannte Sammlungen zusammen. Davon darf es beliebig viele
+geben (z. B. „Star Wars“, „Achtziger“, „Tatort-Klassiker“); jede bekommt ihre
+eigene Playlist.
 
-1. **Suchen** – Titel oder Teil davon eingeben (z. B. `Star Wars`); gefunden
-   wird alles aus Film- und Serienbibliothek, dessen Name den Begriff enthält.
-   Die Trefferliste lädt schon beim Tippen.
-2. **Aufnehmen** – das `+` legt Serie oder Film in den Bestand. Bei Serien zählt
-   die ganze Serie, nicht die einzelne Episode.
-3. **Vorschau anzeigen** – zeigt, was in der Playlist landen würde: alle
+1. **Anlegen** – auf der Übersicht einen Namen eingeben. Die Übersicht zeigt zu
+   jeder Sammlung Playlist-Name, letzten Lauf und Titelzahl.
+2. **Suchen** – im Almanach einen Titel oder Teil davon eingeben (z. B.
+   `Star Wars`); gefunden wird alles aus Film- und Serienbibliothek, dessen Name
+   den Begriff enthält. Die Trefferliste lädt schon beim Tippen.
+3. **Aufnehmen und entfernen** – das `+` legt Serie oder Film in den Bestand,
+   das `✕` nimmt ihn wieder heraus. Bei Serien zählt die ganze Serie.
+4. **Vorschau anzeigen** – zeigt, was in der Playlist landen würde: alle
    ungesehenen Episoden der gewählten Serien plus die gewählten Filme, streng
    nach Erscheinungsdatum sortiert (Release Order).
-4. **Almanach erstellen** – schreibt das Ergebnis in `Plex Almanach – <Name>`.
+5. **Almanach erstellen** – schreibt das Ergebnis in die Playlist der Sammlung.
 
-Der Bestand bleibt dauerhaft gespeichert. Polling und Webhook ziehen die
+Ein Almanach lässt sich jederzeit wieder öffnen, **umbenennen** (die
+Plex-Playlist wird mitbenannt) oder **löschen** (die Playlist verschwindet mit).
+
+Der Bestand bleibt dauerhaft gespeichert. Polling und Webhook ziehen jede
 Almanach-Playlist genauso nach wie die Zeitreise-Playlist – gesehene Folgen
 fallen also von selbst heraus, und neu hinzugekommene Episoden einer
 gesammelten Serie kommen automatisch dazu.
 
 Zwei bewusste Festlegungen:
 
-- **Die Blacklist gilt hier nicht.** Wer eine Serie ausdrücklich in den Almanach
-  legt, will sie sehen – die ausdrückliche Auswahl sticht.
+- **Die Blacklist gilt hier nicht.** Wer eine Serie ausdrücklich in einen
+  Almanach legt, will sie sehen – die ausdrückliche Auswahl sticht.
 - **Einträge, die aus der Bibliothek verschwinden**, werden beim Bauen
   übersprungen und im Ergebnis benannt, statt den ganzen Lauf abzubrechen.
+
+### Watch-Status zurücksetzen
+
+Am Ende jedes Almanachs steht die **Gefahrenzone** mit „Watch-Status
+zurücksetzen“. Damit gelten alle Filme und Episoden der Sammlung wieder als
+ungesehen – praktisch, um ein Franchise von vorn zu schauen. Technisch ist das
+`markUnplayed()` aus plexapi (`/:/unscrobble`), ausgeführt mit dem Token des
+jeweiligen Home-Users; der Watch-Status anderer Nutzer bleibt unberührt.
+
+Weil sich das nicht rückgängig machen lässt, sind zwei Bestätigungen nötig:
+
+1. Der erste Klick zeigt nur eine Rückfrage – mit genauer Zahl, was betroffen
+   wäre („2 gesehene Episoden und 2 gesehene Filme von insgesamt 5 Episoden und
+   4 Filmen“), für welchen Plex-Nutzer, und was danach passiert.
+2. Erst der rote Knopf „Ja, N Titel zurücksetzen“ führt es aus – und stellt
+   davor noch eine letzte Sicherheitsabfrage.
+
+Direkt danach wird die Playlist der Sammlung neu gebaut; sie enthält dann
+wieder alle Titel.
 
 ### Wochenweise durch die Zeit
 
@@ -178,7 +206,7 @@ Wochenschritte übernehmen diesen Zuschnitt dann unverändert.
 ```
 app/
 ├── main.py          FastAPI: Seiten, htmx-Fragmente, Webhook, Thumb-Proxy
-├── almanach.py      Titelsuche, Bestand, Release-Order-Playlist
+├── almanach.py      Titelsuche, Sammlungen, Release-Order-Playlist, Reset
 ├── config.py        Settings aus Env-Variablen
 ├── formatting.py    Deutsche Datumsformate, Wochentage, Wochenrechnung
 ├── db.py            SQLModel/SQLite: UserState, BlacklistEntry, JourneyLog
@@ -209,10 +237,14 @@ ein Webhook-Event.
 | Methode | Pfad | Zweck |
 |---|---|---|
 | `GET` | `/` | Cockpit mit Zeit-Display und Vorschau |
-| `GET` | `/almanach` | Almanach: Suche, Bestand, Ausgabe |
-| `GET` | `/almanach/search`, `/almanach/preview` | Trefferliste, Vorschau in Release-Order |
-| `POST` | `/almanach/add`, `/almanach/remove` | Bestand pflegen |
-| `POST` | `/almanach/sync` | Almanach-Playlist schreiben |
+| `GET` | `/almanach` | Übersicht aller Sammlungen |
+| `POST` | `/almanach/new` | Sammlung anlegen |
+| `GET` | `/almanach/{id}` | Sammlung öffnen: Suche, Bestand, Ausgabe |
+| `POST` | `/almanach/{id}/rename`, `/almanach/{id}/delete` | Umbenennen, löschen |
+| `GET` | `/almanach/{id}/search`, `/almanach/{id}/preview` | Trefferliste, Vorschau in Release-Order |
+| `POST` | `/almanach/{id}/add`, `/almanach/{id}/remove` | Bestand pflegen |
+| `POST` | `/almanach/{id}/sync` | Playlist der Sammlung schreiben |
+| `GET`/`POST` | `/almanach/{id}/reset` | Watch-Status zurücksetzen (Rückfrage / Ausführung) |
 | `GET` | `/blacklist`, `/logbook` | Blacklist-Verwaltung, Reise-Logbuch |
 | `POST` | `/period` | Zeitraum speichern, Vorschau-Fragment zurückgeben |
 | `GET` | `/preview` | Vorschau-Fragment ohne Speichern |
@@ -238,7 +270,9 @@ Scheduler-Entprellung und alle HTTP-Endpunkte gegen ein Plex-Double ab –
 ein echter Plex-Server wird dafür nicht gebraucht.
 
 Bestehende Datenbanken werden beim Start automatisch um neue Spalten ergänzt;
-ein Update kostet also keine Blacklist- oder Logbuch-Einträge.
+ein Update kostet also keine Blacklist- oder Logbuch-Einträge. Ein Almanach aus
+der Version vor den benannten Sammlungen wird dabei zu „Mein Almanach“ und
+behält seinen bisherigen Playlist-Namen.
 
 ## Sicherheitshinweis
 
@@ -250,6 +284,6 @@ Authentifizierung davorsetzen und `PTM_WEBHOOK_TOKEN` setzen.
 
 - Friends-Accounts (eigener Plex-Login) statt nur Home-User
 - Blacklist auf Episoden-Ebene statt nur ganze Serien/Filme
-- Almanach: mehrere benannte Sammlungen statt einer pro Nutzer
+- Almanach: Sammlungen zwischen Nutzern teilen oder kopieren
 - Historie zuletzt genutzter Zeiträume als Schnellauswahl
   (aktuell wird nur der jeweils letzte Zeitraum gemerkt)

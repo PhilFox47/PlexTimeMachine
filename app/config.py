@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     movie_library: str = "Filme"
     tv_library: str = "Serien"
     playlist_name_template: str = "Plex Time Machine – {user}"
-    almanach_playlist_name_template: str = "Plex Almanach – {user}"
+    almanach_playlist_name_template: str = "Plex Almanach – {user} · {name}"
 
     # --- Automatisierung --------------------------------------------------
     poll_interval_minutes: int = 30
@@ -40,8 +40,17 @@ class Settings(BaseSettings):
     def playlist_name_for(self, user: str) -> str:
         return self.playlist_name_template.format(user=user)
 
-    def almanach_playlist_name_for(self, user: str) -> str:
-        return self.almanach_playlist_name_template.format(user=user)
+    def almanach_playlist_name_for(self, user: str, name: str) -> str:
+        """Playlist-Name eines benannten Almanachs.
+
+        Ältere Konfigurationen kennen den Platzhalter ``{name}`` noch nicht –
+        dann wird er angehängt, damit mehrere Almanachs nicht auf derselben
+        Plex-Playlist landen.
+        """
+        template = self.almanach_playlist_name_template
+        if "{name}" not in template:
+            template = f"{template} · {{name}}"
+        return template.format(user=user, name=name)
 
 
 @lru_cache

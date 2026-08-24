@@ -92,7 +92,7 @@ def _to_hit(obj: Any) -> Optional[SearchHit]:
 
 def search_titles(
     session: Session,
-    user_id: str,
+    almanach: db.Almanach,
     query: str,
     gateway: Optional[PlexGateway] = None,
     limit: int = SEARCH_LIMIT,
@@ -104,7 +104,7 @@ def search_titles(
 
     gateway = gateway or get_gateway()
     try:
-        server = gateway.connect_as(user_id)
+        server = gateway.connect_as(almanach.plex_user_id)
         movies = gateway.movie_section(server).search(
             title=query, libtype="movie", maxresults=limit
         )
@@ -117,7 +117,7 @@ def search_titles(
         log.exception("Almanach-Suche fehlgeschlagen")
         return SearchResult(query=query, error=f"Unerwarteter Fehler: {exc}")
 
-    chosen = db.almanach_keys(session, user_id)
+    chosen = db.almanach_keys(session, almanach.id)
     hits: list[SearchHit] = []
     for obj in list(shows) + list(movies):
         hit = _to_hit(obj)
@@ -176,18 +176,18 @@ def collect_almanach_items(
 
 def build_preview(
     session: Session,
-    user_id: str,
+    almanach: db.Almanach,
     gateway: Optional[PlexGateway] = None,
     limit: Optional[int] = None,
 ) -> PreviewResult:
     """Vorschau der Almanach-Playlist – ohne etwas in Plex zu verändern."""
-    entries = db.list_almanach(session, user_id)
+    entries = db.list_almanach_entries(session, almanach.id)
     if not entries:
         return PreviewResult()
 
     gateway = gateway or get_gateway()
     try:
-        server = gateway.connect_as(user_id)
+        server = gateway.connect_as(almanach.plex_user_id)
         items, missing = collect_almanach_items(server, entries)
     except PlexUnavailable as exc:
         return PreviewResult(error=str(exc))
@@ -216,17 +216,17 @@ def build_preview(
 
 def sync_almanach(
     session: Session,
-    user_id: str,
+    almanach: db.Almanach,
     trigger: str = "manual",
     gateway: Optional[PlexGateway] = None,
 ) -> SyncResult:
-    """Almanach-Playlist des Nutzers neu aufbauen."""
+    """Playlist eines benannten Almanachs neu aufbauen."""
     gateway = gateway or get_gateway()
-    state = db.get_or_create_almanach_state(session, user_id)
-    playlist_name = state.target_playlist_name or get_settings().almanach_playlist_name_for(
-        user_id
+    user_id = almanach.plex_user_id
+    playlist_name = almanach.target_playlist_name or get_settings().almanach_playlist_name_for(
+        user_id, almanach.name
     )
-    entries = db.list_almanach(session, user_id)
+    entries = db.list_almanach_entries(session, almanach.id)
 
     if not entries:
         return SyncResult(
@@ -234,7 +234,7 @@ def sync_almanach(
             playlist_name=playlist_name,
             trigger=trigger,
             changed=False,
-            error="Der Almanach ist leer – bitte zuerst Serien oder Filme aufnehmen.",
+            error=f"»{almanach.name}« ist leer – bitte zuerst Serien oder Filme aufnehmen.",
         )
 
     try:
@@ -254,13 +254,15 @@ def sync_almanach(
             error=f"Unerwarteter Fehler: {exc}",
         )
 
-    state.last_synced_at = db.utcnow()
-    state.last_item_count = len(items)
-    state.target_playlist_name = playlist_name
-    session.add(state)
+    almanach.last_synced_at = db.utcnow()
+    almanach.last_item_count = len(items)
+    almanach.target_playlist_name = playlist_name
+    session.add(almanach)
     session.commit()
 
-    note = f"{len(missing)} Einträge nicht mehr in der Bibliothek" if missing else ""
+    note = almanach.name
+    if missing:
+        note += f" · {len(missing)} Einträge nicht mehr in der Bibliothek"
     db.log_journey(
         session, user_id, None, None, len(items), trigger=trigger, note=note, kind="almanach"
     )
@@ -286,8 +288,172 @@ def sync_almanach(
 def sync_all_almanachs(
     session: Session, trigger: str = "poll", gateway: Optional[PlexGateway] = None
 ) -> list[SyncResult]:
-    """Alle Nutzer mit gefülltem Almanach nachziehen (Scheduler/Webhook)."""
+    """Jeden gefüllten Almanach nachziehen (Scheduler/Webhook)."""
     return [
-        sync_almanach(session, user_id, trigger=trigger, gateway=gateway)
-        for user_id in db.users_with_almanach(session)
+        sync_almanach(session, almanach, trigger=trigger, gateway=gateway)
+        for almanach in db.almanachs_with_entries(session)
     ]
+
+
+def rename_playlist(
+    almanach: db.Almanach, old_name: str, gateway: Optional[PlexGateway] = None
+) -> bool:
+    """Die vorhandene Plex-Playlist mit umbenennen.
+
+    Sonst bliebe die alte Playlist unter dem alten Namen liegen und der nächste
+    Sync legte eine zweite an.
+    """
+    new_name = almanach.target_playlist_name
+    if not old_name or old_name == new_name:
+        return False
+    gateway = gateway or get_gateway()
+    server = gateway.connect_as(almanach.plex_user_id)
+    for playlist in server.playlists():
+        if playlist.title == old_name:
+            playlist.editTitle(new_name)
+            return True
+    return False
+
+
+def delete_playlist(almanach: db.Almanach, gateway: Optional[PlexGateway] = None) -> bool:
+    """Die Plex-Playlist eines Almanachs entfernen (beim Löschen der Sammlung)."""
+    if not almanach.target_playlist_name:
+        return False
+    gateway = gateway or get_gateway()
+    server = gateway.connect_as(almanach.plex_user_id)
+    for playlist in server.playlists():
+        if playlist.title == almanach.target_playlist_name:
+            playlist.delete()
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Watch-Status zurücksetzen
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ResetPlan:
+    """Was ein Reset anfassen würde – Grundlage für die Rückfrage."""
+
+    watched_movies: int = 0
+    watched_episodes: int = 0
+    total_movies: int = 0
+    total_episodes: int = 0
+    missing: list[str] = field(default_factory=list)
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return not self.error
+
+    @property
+    def watched_total(self) -> int:
+        return self.watched_movies + self.watched_episodes
+
+    @property
+    def nothing_to_do(self) -> bool:
+        return self.ok and self.watched_total == 0
+
+
+@dataclass
+class ResetResult:
+    """Ergebnis eines ausgeführten Resets."""
+
+    movies: int = 0
+    episodes: int = 0
+    missing: list[str] = field(default_factory=list)
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return not self.error
+
+    @property
+    def total(self) -> int:
+        return self.movies + self.episodes
+
+
+def _plan_for_entry(obj: Any) -> tuple[int, int, int, int]:
+    """(gesehene Filme, gesehene Episoden, Filme gesamt, Episoden gesamt)."""
+    if getattr(obj, "type", "") == "show":
+        total = _as_int(getattr(obj, "leafCount", None)) or 0
+        watched = _as_int(getattr(obj, "viewedLeafCount", None)) or 0
+        return 0, watched, 0, total
+    return (1 if getattr(obj, "viewCount", 0) else 0), 0, 1, 0
+
+
+def plan_reset(
+    session: Session, almanach: db.Almanach, gateway: Optional[PlexGateway] = None
+) -> ResetPlan:
+    """Zählen, was ein Reset zurücksetzen würde – verändert nichts."""
+    entries = db.list_almanach_entries(session, almanach.id)
+    if not entries:
+        return ResetPlan(error=f"»{almanach.name}« ist leer – nichts zurückzusetzen.")
+
+    gateway = gateway or get_gateway()
+    plan = ResetPlan()
+    try:
+        server = gateway.connect_as(almanach.plex_user_id)
+        for entry in entries:
+            try:
+                obj = server.fetchItem(int(entry.plex_rating_key))
+            except (NotFound, ValueError):
+                plan.missing.append(entry.title or entry.plex_rating_key)
+                continue
+            movies, episodes, total_movies, total_episodes = _plan_for_entry(obj)
+            plan.watched_movies += movies
+            plan.watched_episodes += episodes
+            plan.total_movies += total_movies
+            plan.total_episodes += total_episodes
+    except PlexUnavailable as exc:
+        return ResetPlan(error=str(exc))
+    except Exception as exc:  # pragma: no cover - unerwartete plexapi-Fehler
+        log.exception("Reset-Vorschau fehlgeschlagen")
+        return ResetPlan(error=f"Unerwarteter Fehler: {exc}")
+
+    return plan
+
+
+def reset_watch_state(
+    session: Session, almanach: db.Almanach, gateway: Optional[PlexGateway] = None
+) -> ResetResult:
+    """Alle Filme und Episoden des Almanachs auf »ungesehen« setzen.
+
+    Serien werden in einem Rutsch zurückgesetzt (``markUnplayed`` auf der Serie
+    wirkt auf alle Episoden); gezählt wird, was vorher als gesehen galt.
+    """
+    entries = db.list_almanach_entries(session, almanach.id)
+    if not entries:
+        return ResetResult(error=f"»{almanach.name}« ist leer – nichts zurückzusetzen.")
+
+    gateway = gateway or get_gateway()
+    result = ResetResult()
+    try:
+        server = gateway.connect_as(almanach.plex_user_id)
+        for entry in entries:
+            try:
+                obj = server.fetchItem(int(entry.plex_rating_key))
+            except (NotFound, ValueError):
+                result.missing.append(entry.title or entry.plex_rating_key)
+                continue
+
+            movies, episodes, _, _ = _plan_for_entry(obj)
+            obj.markUnplayed()
+            result.movies += movies
+            result.episodes += episodes
+    except PlexUnavailable as exc:
+        return ResetResult(error=str(exc))
+    except Exception as exc:  # pragma: no cover - unerwartete plexapi-Fehler
+        log.exception("Reset fehlgeschlagen")
+        return ResetResult(error=f"Unerwarteter Fehler: {exc}")
+
+    log.info(
+        "Watch-Status zurückgesetzt: %s Filme, %s Episoden (Almanach »%s«, Nutzer %s)",
+        result.movies,
+        result.episodes,
+        almanach.name,
+        almanach.plex_user_id,
+    )
+    return result

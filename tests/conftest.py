@@ -56,6 +56,11 @@ class FakeMovie:
         self.year = self.originallyAvailableAt.year
         self.thumb = f"/library/metadata/{rating_key}/thumb/1"
         self.duration = duration
+        self.viewCount = 0
+
+    def markUnplayed(self):
+        self.viewCount = 0
+        return self
 
     def __repr__(self) -> str:  # pragma: no cover - nur für Testausgabe
         return f"<Movie {self.title}>"
@@ -84,6 +89,11 @@ class FakeEpisode:
         self.originallyAvailableAt = _dt(air)
         self.year = self.originallyAvailableAt.year
         self.duration = 2_700_000
+        self.viewCount = 0
+
+    def markUnplayed(self):
+        self.viewCount = 0
+        return self
 
     def __repr__(self) -> str:  # pragma: no cover - nur für Testausgabe
         return f"<Episode {self.grandparentTitle} {self.title}>"
@@ -99,6 +109,16 @@ class FakeShow:
         self.thumb = f"/library/metadata/{rating_key}/thumb/1"
         self._episodes = episodes
         self.leafCount = len(episodes)
+
+    @property
+    def viewedLeafCount(self) -> int:
+        return sum(1 for e in self._episodes if getattr(e, "viewCount", 0))
+
+    def markUnplayed(self):
+        """Plex setzt beim Zurücksetzen einer Serie alle Episoden mit zurück."""
+        for episode in self._episodes:
+            episode.markUnplayed()
+        return self
 
     def episodes(self) -> list["FakeEpisode"]:
         return list(self._episodes)
@@ -165,6 +185,9 @@ class FakePlaylist:
     def removeItems(self, items) -> None:
         for item in items:
             self._items.remove(item)
+
+    def editTitle(self, title: str, locked: bool = True) -> None:
+        self.title = title
 
     def delete(self) -> None:
         self.deleted = True

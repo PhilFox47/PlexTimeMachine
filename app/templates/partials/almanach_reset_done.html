@@ -1,0 +1,19 @@
+{# Ergebnis des Resets samt anschließendem Playlist-Neubau. #}
+{% if not result.ok %}
+  <div class="notice error"><strong>Reset fehlgeschlagen.</strong> {{ result.error }}</div>
+{% else %}
+  <div class="notice ok">
+    <strong>Zurückgesetzt.</strong>
+    {{ result.episodes }} Episode{{ 'n' if result.episodes != 1 }} und
+    {{ result.movies }} Film{{ 'e' if result.movies != 1 }} in »{{ almanach.name }}«
+    gelten wieder als ungesehen.
+    {%- if result.missing %} ({{ result.missing|join(', ') }} nicht mehr in der Bibliothek){% endif %}
+  </div>
+  {% if sync %}
+    {% if sync.ok %}
+      <div class="notice ok">Playlist neu gebaut: {{ sync.message }}</div>
+    {% else %}
+      <div class="notice error">Playlist nicht neu gebaut: {{ sync.error }}</div>
+    {% endif %}
+  {% endif %}
+{% endif %}

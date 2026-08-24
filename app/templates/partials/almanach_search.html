@@ -31,7 +31,7 @@
           <td class="list-actions">
             <button class="btn-add"
                     title="In den Almanach aufnehmen"
-                    hx-post="/almanach/add"
+                    hx-post="/almanach/{{ almanach.id }}/add"
                     hx-target="#almanach-stock"
                     hx-swap="innerHTML"
                     hx-vals='{{ {"rating_key": hit.rating_key, "media_type": hit.media_type, "title": hit.title, "year": hit.year|string if hit.year else ""}|tojson }}'

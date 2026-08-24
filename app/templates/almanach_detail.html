@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% set page = 'almanach' %}
+{% block title %}{{ almanach.name }} · Almanach{% endblock %}
+
+{% block content %}
+
+<section class="panel book">
+  <h2><a href="/almanach">Almanachs</a> · {{ almanach.name }}</h2>
+
+  <form class="search-bar" method="post" action="/almanach/{{ almanach.id }}/rename">
+    <input type="text" name="name" maxlength="80" required value="{{ almanach.name }}"
+           aria-label="Name des Almanachs">
+    <button class="btn" type="submit">Umbenennen</button>
+  </form>
+
+  <p class="cell-sub">
+    Playlist: <span class="mono">{{ almanach.target_playlist_name }}</span>
+    {%- if almanach.last_synced_at %} · zuletzt erstellt
+      {{ almanach.last_synced_at|de_datetime }} UTC mit {{ almanach.last_item_count }} Titeln
+    {%- endif %}
+  </p>
+</section>
+
+<section class="panel">
+  <h2>Archiv durchsuchen</h2>
+
+  {# Ziel, Swap und Indikator erbt das Eingabefeld vom Formular; es feuert
+     zusätzlich beim Tippen, das Formular beim Absenden. #}
+  <form class="search-bar"
+        hx-get="/almanach/{{ almanach.id }}/search"
+        hx-target="#search-results"
+        hx-swap="innerHTML"
+        hx-indicator="#search-flux"
+        hx-trigger="submit">
+    <input type="search" id="q" name="q" autocomplete="off"
+           placeholder="z. B. Star Wars" aria-label="Suchbegriff"
+           hx-get="/almanach/{{ almanach.id }}/search"
+           hx-trigger="keyup changed delay:400ms, search">
+    <button class="btn" type="submit">Suchen</button>
+  </form>
+
+  <div id="search-flux" class="flux">
+    <div class="flux-bar"></div>
+    <div class="flux-text">Durchsuche das Archiv …</div>
+  </div>
+
+  <div id="search-results"></div>
+</section>
+
+<section class="panel book">
+  <h2>Bestand</h2>
+
+  <div id="almanach-stock">
+    {% include "partials/almanach_stock.html" %}
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Ausgabe</h2>
+
+  <div class="week-nav" style="margin-top:0; padding-top:0; border-top:0">
+    <span class="nav-label">Release Order</span>
+    <button class="btn-week" type="button"
+            hx-get="/almanach/{{ almanach.id }}/preview"
+            hx-target="#almanach-preview"
+            hx-swap="innerHTML"
+            hx-indicator="#preview-flux">Vorschau anzeigen</button>
+  </div>
+
+  <div id="preview-flux" class="flux">
+    <div class="flux-bar"></div>
+    <div class="flux-text">Sortiere nach Erscheinungsdatum …</div>
+  </div>
+
+  <div id="almanach-preview"></div>
+  <div id="almanach-status"></div>
+
+  {% include "partials/almanach_build.html" %}
+
+  <div id="build-flux" class="flux">
+    <div class="flux-bar"></div>
+    <div class="flux-text">Binde den Almanach …</div>
+  </div>
+
+  <p class="cell-sub" style="margin-bottom:0">
+    Schreibt alle ungesehenen Titel des Bestands nach Erscheinungsdatum sortiert
+    in »{{ almanach.target_playlist_name }}«. Polling und Webhook ziehen die
+    Playlist danach automatisch nach.
+  </p>
+</section>
+
+<section class="panel">
+  <h2>Gefahrenzone</h2>
+
+  <div class="week-nav" style="margin-top:0; padding-top:0; border-top:0">
+    <button class="btn-week" type="button"
+            hx-get="/almanach/{{ almanach.id }}/reset"
+            hx-target="#reset-zone"
+            hx-swap="innerHTML"
+            hx-indicator="#reset-flux">Watch-Status zurücksetzen …</button>
+
+    <form method="post" action="/almanach/{{ almanach.id }}/delete" class="inline-form"
+          onsubmit="return confirm('Almanach »{{ almanach.name }}« mitsamt Playlist löschen?')">
+      <button class="btn-week" type="submit">Almanach löschen</button>
+    </form>
+  </div>
+
+  <div id="reset-flux" class="flux">
+    <div class="flux-bar"></div>
+    <div class="flux-text">Zähle gesehene Titel …</div>
+  </div>
+
+  <div id="reset-zone"></div>
+</section>
+{% endblock %}

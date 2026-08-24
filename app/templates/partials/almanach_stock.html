@@ -1,20 +1,20 @@
-{# Aufgenommene Serien und Filme #}
-{% if not almanach %}
+{# Aufgenommene Serien und Filme eines Almanachs #}
+{% if not entries %}
   <div class="empty">
     Noch nichts aufgenommen – oben suchen und mit „+“ in den Almanach legen.
   </div>
 {% else %}
   <div class="stats">
     <div class="stat">
-      <div class="value">{{ almanach|length }}</div>
+      <div class="value">{{ entries|length }}</div>
       <div class="label">Einträge</div>
     </div>
     <div class="stat">
-      <div class="value">{{ almanach|selectattr('is_show')|list|length }}</div>
+      <div class="value">{{ entries|selectattr('is_show')|list|length }}</div>
       <div class="label">Serien</div>
     </div>
     <div class="stat">
-      <div class="value">{{ almanach|rejectattr('is_show')|list|length }}</div>
+      <div class="value">{{ entries|rejectattr('is_show')|list|length }}</div>
       <div class="label">Filme</div>
     </div>
   </div>
@@ -25,7 +25,7 @@
         <tr><th>Titel</th><th>Jahr</th><th>Typ</th><th>Aufgenommen</th><th></th></tr>
       </thead>
       <tbody>
-      {% for entry in almanach %}
+      {% for entry in entries %}
         <tr>
           <td class="cell-title">{{ entry.title or '(ohne Titel)' }}</td>
           <td class="cell-sub">{{ entry.year or '—' }}</td>
@@ -34,7 +34,7 @@
           <td class="mono">{{ entry.added_at|de_datetime }}</td>
           <td class="list-actions">
             <button class="btn-ban" title="Aus dem Almanach entfernen"
-                    hx-post="/almanach/remove"
+                    hx-post="/almanach/{{ almanach.id }}/remove"
                     hx-target="#almanach-stock"
                     hx-swap="innerHTML"
                     hx-vals='{{ {"rating_key": entry.plex_rating_key}|tojson }}'>&#10005;</button>
@@ -44,13 +44,6 @@
       </tbody>
     </table>
   </div>
-
-  {% if almanach_state and almanach_state.last_synced_at %}
-  <div class="notice muted">
-    Zuletzt erstellt: {{ almanach_state.last_synced_at|de_datetime }} UTC ·
-    {{ almanach_state.last_item_count }} Titel in »{{ almanach_state.target_playlist_name }}«
-  </div>
-  {% endif %}
 {% endif %}
 
 {# Knopfzustand mitziehen: leerer Bestand -> deaktiviert, gefüllt -> bereit. #}

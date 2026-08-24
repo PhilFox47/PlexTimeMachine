@@ -10,58 +10,65 @@ from app import db
 from app.almanach import (
     build_preview,
     collect_almanach_items,
+    plan_reset,
+    reset_watch_state,
     search_titles,
     sync_all_almanachs,
     sync_almanach,
 )
+
+
+@pytest.fixture
+def almanach(session):
+    return db.create_almanach(session, "Alex", "Star Wars")
 
 # ---------------------------------------------------------------------------
 # Suche
 # ---------------------------------------------------------------------------
 
 
-def test_search_finds_shows_and_movies_by_partial_title(session, gateway):
-    result = search_titles(session, "Alex", "rider", gateway=gateway)
+def test_search_finds_shows_and_movies_by_partial_title(session, gateway, almanach):
+    result = search_titles(session, almanach, "rider", gateway=gateway)
 
     assert result.ok
     assert [(h.title, h.media_type) for h in result.hits] == [("Knight Rider", "show")]
     assert result.hits[0].episode_count == 2  # Serie meldet ihren Umfang
 
 
-def test_search_is_case_insensitive_and_matches_movies(session, gateway):
-    result = search_titles(session, "Alex", "BRAZIL", gateway=gateway)
+def test_search_is_case_insensitive_and_matches_movies(session, gateway, almanach):
+    result = search_titles(session, almanach, "BRAZIL", gateway=gateway)
 
     assert [h.title for h in result.hits] == ["Brazil"]
     assert result.hits[0].media_type == "movie"
     assert result.hits[0].year == 1985
 
 
-def test_search_marks_entries_already_in_almanach(session, gateway):
-    db.add_to_almanach(session, "Alex", "100", "show", "Knight Rider")
+def test_search_marks_entries_already_in_almanach(session, gateway, almanach):
+    db.add_to_almanach(session, almanach, "100", "show", "Knight Rider")
 
-    result = search_titles(session, "Alex", "rider", gateway=gateway)
+    result = search_titles(session, almanach, "rider", gateway=gateway)
 
     assert result.hits[0].already_added is True
 
 
-def test_search_without_query_returns_nothing(session, gateway):
-    assert search_titles(session, "Alex", "   ", gateway=gateway).hits == []
+def test_search_without_query_returns_nothing(session, gateway, almanach):
+    assert search_titles(session, almanach, "   ", gateway=gateway).hits == []
 
 
-def test_search_reports_plex_errors(session):
+def test_search_reports_plex_errors(session, almanach):
     from app.plex_client import PlexUnavailable
 
     class BrokenGateway:
         def connect_as(self, user_id):
             raise PlexUnavailable("Server offline")
 
-    result = search_titles(session, "Alex", "star", gateway=BrokenGateway())
+    result = search_titles(session, almanach, "star", gateway=BrokenGateway())
 
     assert not result.ok and "offline" in result.error
 
 
-def test_search_respects_limit(session, gateway):
-    result = search_titles(session, "Alex", "", gateway=gateway, limit=1)
+def test_search_respects_limit(session, gateway, almanach):
+    result = search_titles(session, almanach, "", gateway=gateway, limit=1)
 
     assert result.hits == []  # leere Suche liefert grundsätzlich nichts
 
@@ -71,15 +78,14 @@ def test_search_respects_limit(session, gateway):
 # ---------------------------------------------------------------------------
 
 
-def _entries(session, *specs):
+def _entries(session, almanach, *specs):
     for key, media_type, title in specs:
-        db.add_to_almanach(session, "Alex", key, media_type, title)
-    return db.list_almanach(session, "Alex")
+        db.add_to_almanach(session, almanach, key, media_type, title)
+    return db.list_almanach_entries(session, almanach.id)
 
 
-def test_collect_expands_show_into_episodes_and_keeps_release_order(session, gateway):
-    entries = _entries(
-        session, ("100", "show", "Knight Rider"), ("1", "movie", "Zurück in die Zukunft")
+def test_collect_expands_show_into_episodes_and_keeps_release_order(session, gateway, almanach):
+    entries = _entries(session, almanach, ("100", "show", "Knight Rider"), ("1", "movie", "Zurück in die Zukunft")
     )
 
     items, missing = collect_almanach_items(gateway.server, entries)
@@ -94,9 +100,8 @@ def test_collect_expands_show_into_episodes_and_keeps_release_order(session, gat
     assert dates == sorted(dates)  # streng nach Erscheinungsdatum
 
 
-def test_collect_interleaves_movies_and_episodes_chronologically(session, gateway):
-    entries = _entries(
-        session,
+def test_collect_interleaves_movies_and_episodes_chronologically(session, gateway, almanach):
+    entries = _entries(session, almanach,
         ("200", "show", "Das A-Team"),
         ("1", "movie", "Zurück in die Zukunft"),
         ("2", "movie", "Brazil"),
@@ -111,11 +116,10 @@ def test_collect_interleaves_movies_and_episodes_chronologically(session, gatewa
     ]
 
 
-def test_collect_skips_watched_items(session, gateway, plex_data):
+def test_collect_skips_watched_items(session, gateway, plex_data, almanach):
     plex_data["movies"][0].viewCount = 1          # Zurück in die Zukunft gesehen
     plex_data["episodes"][0].viewCount = 2        # Knight Rider Pilot gesehen
-    entries = _entries(
-        session, ("100", "show", "Knight Rider"), ("1", "movie", "Zurück in die Zukunft")
+    entries = _entries(session, almanach, ("100", "show", "Knight Rider"), ("1", "movie", "Zurück in die Zukunft")
     )
 
     items, _ = collect_almanach_items(gateway.server, entries)
@@ -123,8 +127,8 @@ def test_collect_skips_watched_items(session, gateway, plex_data):
     assert [i.display_title for i in items] == ["Knight Rider – S01E02 Folge 2"]
 
 
-def test_collect_reports_entries_missing_from_library(session, gateway):
-    entries = _entries(session, ("999", "show", "Verschwundene Serie"))
+def test_collect_reports_entries_missing_from_library(session, gateway, almanach):
+    entries = _entries(session, almanach, ("999", "show", "Verschwundene Serie"))
 
     items, missing = collect_almanach_items(gateway.server, entries)
 
@@ -132,9 +136,9 @@ def test_collect_reports_entries_missing_from_library(session, gateway):
     assert missing == ["Verschwundene Serie"]
 
 
-def test_collect_deduplicates_titles(session, gateway):
+def test_collect_deduplicates_titles(session, gateway, almanach):
     """Ein Film, der zweimal im Bestand landet, kommt trotzdem nur einmal rein."""
-    entries = list(_entries(session, ("1", "movie", "Zurück in die Zukunft")))
+    entries = list(_entries(session, almanach, ("1", "movie", "Zurück in die Zukunft")))
     entries = entries * 2
 
     items, _ = collect_almanach_items(gateway.server, entries)
@@ -142,25 +146,25 @@ def test_collect_deduplicates_titles(session, gateway):
     assert len(items) == 1
 
 
-def test_preview_counts_movies_and_episodes(session, gateway):
-    _entries(session, ("100", "show", "Knight Rider"), ("2", "movie", "Brazil"))
+def test_preview_counts_movies_and_episodes(session, gateway, almanach):
+    _entries(session, almanach, ("100", "show", "Knight Rider"), ("2", "movie", "Brazil"))
 
-    preview = build_preview(session, "Alex", gateway=gateway)
+    preview = build_preview(session, almanach, gateway=gateway)
 
     assert preview.ok
     assert (preview.total, preview.movies, preview.episodes) == (3, 1, 2)
 
 
-def test_preview_is_empty_without_entries(session, gateway):
-    preview = build_preview(session, "Alex", gateway=gateway)
+def test_preview_is_empty_without_entries(session, almanach, gateway):
+    preview = build_preview(session, almanach, gateway=gateway)
 
     assert preview.ok and preview.total == 0
 
 
-def test_preview_truncates_to_limit(session, gateway):
-    _entries(session, ("100", "show", "Knight Rider"), ("2", "movie", "Brazil"))
+def test_preview_truncates_to_limit(session, gateway, almanach):
+    _entries(session, almanach, ("100", "show", "Knight Rider"), ("2", "movie", "Brazil"))
 
-    preview = build_preview(session, "Alex", gateway=gateway, limit=2)
+    preview = build_preview(session, almanach, gateway=gateway, limit=2)
 
     assert preview.truncated and len(preview.items) == 2 and preview.total == 3
 
@@ -170,79 +174,83 @@ def test_preview_truncates_to_limit(session, gateway):
 # ---------------------------------------------------------------------------
 
 
-def test_sync_writes_own_playlist_and_logs_journey(session, gateway):
-    _entries(session, ("100", "show", "Knight Rider"), ("1", "movie", "Zurück in die Zukunft"))
+def test_sync_writes_own_playlist_and_logs_journey(session, gateway, almanach):
+    _entries(session, almanach, ("100", "show", "Knight Rider"), ("1", "movie", "Zurück in die Zukunft"))
 
-    result = sync_almanach(session, "Alex", trigger="manual", gateway=gateway)
+    result = sync_almanach(session, almanach, trigger="manual", gateway=gateway)
 
     assert result.ok and result.item_count == 3
-    assert result.playlist_name == "Plex Almanach – Alex"
+    assert result.playlist_name == "Plex Almanach – Alex · Star Wars"
 
     playlist = gateway.server.playlists()[0]
-    assert playlist.title == "Plex Almanach – Alex"
+    assert playlist.title == "Plex Almanach – Alex · Star Wars"
     assert len(playlist.items()) == 3
 
-    state = db.get_or_create_almanach_state(session, "Alex")
-    assert state.last_item_count == 3 and state.last_synced_at is not None
+    session.refresh(almanach)
+    assert almanach.last_item_count == 3 and almanach.last_synced_at is not None
 
     journey = db.list_journeys(session, "Alex")[0]
     assert journey.kind == "almanach" and journey.item_count == 3
     assert journey.date_start is None  # der Almanach kennt keinen Zeitraum
 
 
-def test_sync_requires_entries(session, gateway):
-    result = sync_almanach(session, "Alex", gateway=gateway)
+def test_sync_requires_entries(session, almanach, gateway):
+    result = sync_almanach(session, almanach, gateway=gateway)
 
     assert not result.ok and "leer" in result.error
     assert db.list_journeys(session, "Alex") == []
 
 
-def test_sync_ignores_blacklist_because_selection_is_explicit(session, gateway):
+def test_sync_ignores_blacklist_because_selection_is_explicit(session, gateway, almanach):
     """Wer eine Serie bewusst in den Almanach legt, will sie auch sehen."""
     db.add_to_blacklist(session, "Alex", "100", "show", "Knight Rider")
-    _entries(session, ("100", "show", "Knight Rider"))
+    _entries(session, almanach, ("100", "show", "Knight Rider"))
 
-    result = sync_almanach(session, "Alex", gateway=gateway)
+    result = sync_almanach(session, almanach, gateway=gateway)
 
     assert result.item_count == 2
 
 
-def test_sync_reports_missing_entries_in_message(session, gateway):
-    _entries(session, ("2", "movie", "Brazil"), ("999", "movie", "Weg damit"))
+def test_sync_reports_missing_entries_in_message(session, gateway, almanach):
+    _entries(session, almanach, ("2", "movie", "Brazil"), ("999", "movie", "Weg damit"))
 
-    result = sync_almanach(session, "Alex", gateway=gateway)
+    result = sync_almanach(session, almanach, gateway=gateway)
 
     assert result.ok and result.item_count == 1
     assert "Weg damit" in result.message
     assert "1 Einträge nicht mehr" in db.list_journeys(session, "Alex")[0].note
 
 
-def test_sync_uses_user_context(session, gateway):
-    _entries(session, ("2", "movie", "Brazil"))
-    db.remove_from_almanach(session, "Alex", "2")
-    db.add_to_almanach(session, "Nina", "2", "movie", "Brazil")
+def test_sync_uses_the_owning_user_context(session, gateway):
+    nina = db.create_almanach(session, "Nina", "Brazil-Abend")
+    db.add_to_almanach(session, nina, "2", "movie", "Brazil")
 
-    sync_almanach(session, "Nina", gateway=gateway)
+    sync_almanach(session, nina, gateway=gateway)
 
     assert gateway.connections == ["Nina"]
 
 
-def test_sync_all_almanachs_covers_only_users_with_entries(session, gateway):
-    db.add_to_almanach(session, "Alex", "2", "movie", "Brazil")
-    db.get_or_create_almanach_state(session, "Nina")  # kein Bestand
+def test_sync_all_almanachs_covers_every_filled_collection(session, almanach, gateway):
+    db.add_to_almanach(session, almanach, "2", "movie", "Brazil")
+    zweiter = db.create_almanach(session, "Alex", "Achtziger")
+    db.add_to_almanach(session, zweiter, "1", "movie", "Zurück in die Zukunft")
+    db.create_almanach(session, "Alex", "Leer")  # ohne Bestand
 
     results = sync_all_almanachs(session, trigger="poll", gateway=gateway)
 
-    assert [r.user_id for r in results] == ["Alex"]
-    assert results[0].trigger == "poll"
+    assert sorted(r.playlist_name for r in results) == [
+        "Plex Almanach – Alex · Achtziger",
+        "Plex Almanach – Alex · Star Wars",
+    ]
+    assert all(r.trigger == "poll" for r in results)
 
 
-def test_scheduler_run_syncs_both_playlist_kinds(session, gateway):
+def test_scheduler_run_syncs_both_playlist_kinds(session, gateway, almanach):
     from app.plex_client import set_gateway
     from app.scheduler import run_sync_all
 
     db.set_period(session, "Alex", date(1985, 1, 1), date(1985, 12, 31))
-    db.add_to_almanach(session, "Alex", "100", "show", "Knight Rider")
+    db.add_to_almanach(session, almanach, "100", "show", "Knight Rider")
 
     set_gateway(gateway)
     try:
@@ -251,5 +259,174 @@ def test_scheduler_run_syncs_both_playlist_kinds(session, gateway):
         set_gateway(None)
 
     titles = sorted(p.title for p in gateway.server.playlists())
-    assert titles == ["Plex Almanach – Alex", "Plex Time Machine – Alex"]
+    assert titles == ["Plex Almanach – Alex · Star Wars", "Plex Time Machine – Alex"]
     assert {j.kind for j in db.list_journeys(session, "Alex")} == {"timemachine", "almanach"}
+
+
+# ---------------------------------------------------------------------------
+# Mehrere benannte Almanachs
+# ---------------------------------------------------------------------------
+
+
+def test_collections_are_independent(session, gateway):
+    star_wars = db.create_almanach(session, "Alex", "Star Wars")
+    achtziger = db.create_almanach(session, "Alex", "Achtziger")
+
+    db.add_to_almanach(session, star_wars, "100", "show", "Knight Rider")
+    db.add_to_almanach(session, achtziger, "1", "movie", "Zurück in die Zukunft")
+
+    assert db.almanach_keys(session, star_wars.id) == {"100"}
+    assert db.almanach_keys(session, achtziger.id) == {"1"}
+    assert star_wars.target_playlist_name != achtziger.target_playlist_name
+
+
+def test_get_almanach_refuses_other_users(session):
+    fremd = db.create_almanach(session, "Nina", "Ninas Sammlung")
+
+    assert db.get_almanach(session, "Alex", fremd.id) is None
+    assert db.get_almanach(session, "Nina", fremd.id) is not None
+
+
+def test_rename_updates_the_generated_playlist_name(session, almanach):
+    db.rename_almanach(session, almanach, "Star Wars komplett")
+
+    assert almanach.name == "Star Wars komplett"
+    assert almanach.target_playlist_name == "Plex Almanach – Alex · Star Wars komplett"
+
+
+def test_rename_keeps_a_hand_picked_playlist_name(session, almanach):
+    almanach.target_playlist_name = "Meine eigene Playlist"
+    session.add(almanach)
+    session.commit()
+
+    db.rename_almanach(session, almanach, "Neuer Name")
+
+    assert almanach.target_playlist_name == "Meine eigene Playlist"
+
+
+def test_delete_removes_collection_and_entries(session, almanach):
+    db.add_to_almanach(session, almanach, "100", "show", "Knight Rider")
+
+    db.delete_almanach(session, almanach)
+
+    assert db.list_almanachs(session, "Alex") == []
+    assert db.list_almanach_entries(session, almanach.id) == []
+
+
+def test_delete_playlist_removes_the_plex_playlist(session, almanach, gateway):
+    from app.almanach import delete_playlist
+
+    db.add_to_almanach(session, almanach, "2", "movie", "Brazil")
+    sync_almanach(session, almanach, gateway=gateway)
+    assert gateway.server.playlists()
+
+    assert delete_playlist(almanach, gateway=gateway) is True
+    assert gateway.server.playlists() == []
+
+
+# ---------------------------------------------------------------------------
+# Watch-Status zurücksetzen
+# ---------------------------------------------------------------------------
+
+
+def test_plan_reset_counts_watched_items(session, gateway, plex_data, almanach):
+    plex_data["episodes"][0].viewCount = 1        # eine Knight-Rider-Folge gesehen
+    plex_data["movies"][1].viewCount = 1          # Brazil gesehen
+    _entries(session, almanach, ("100", "show", "Knight Rider"), ("2", "movie", "Brazil"))
+
+    plan = plan_reset(session, almanach, gateway=gateway)
+
+    assert plan.ok
+    assert (plan.watched_episodes, plan.watched_movies) == (1, 1)
+    assert (plan.total_episodes, plan.total_movies) == (2, 1)
+    assert plan.watched_total == 2
+    assert not plan.nothing_to_do
+
+
+def test_plan_reset_knows_when_nothing_is_watched(session, gateway, almanach):
+    _entries(session, almanach, ("100", "show", "Knight Rider"))
+
+    plan = plan_reset(session, almanach, gateway=gateway)
+
+    assert plan.nothing_to_do and plan.watched_total == 0
+
+
+def test_plan_reset_requires_entries(session, gateway, almanach):
+    plan = plan_reset(session, almanach, gateway=gateway)
+
+    assert not plan.ok and "leer" in plan.error
+
+
+def test_plan_reset_does_not_change_anything(session, gateway, plex_data, almanach):
+    plex_data["episodes"][0].viewCount = 1
+    _entries(session, almanach, ("100", "show", "Knight Rider"))
+
+    plan_reset(session, almanach, gateway=gateway)
+
+    assert plex_data["episodes"][0].viewCount == 1  # unverändert
+
+
+def test_reset_marks_everything_unplayed(session, gateway, plex_data, almanach):
+    plex_data["episodes"][0].viewCount = 1
+    plex_data["episodes"][1].viewCount = 3
+    plex_data["movies"][1].viewCount = 1
+    _entries(session, almanach, ("100", "show", "Knight Rider"), ("2", "movie", "Brazil"))
+
+    result = reset_watch_state(session, almanach, gateway=gateway)
+
+    assert result.ok
+    assert (result.episodes, result.movies, result.total) == (2, 1, 3)
+    assert [e.viewCount for e in plex_data["episodes"][:2]] == [0, 0]
+    assert plex_data["movies"][1].viewCount == 0
+
+
+def test_reset_only_touches_its_own_collection(session, gateway, plex_data, almanach):
+    plex_data["movies"][0].viewCount = 1          # Zurück in die Zukunft, nicht im Bestand
+    plex_data["movies"][1].viewCount = 1          # Brazil, im Bestand
+    _entries(session, almanach, ("2", "movie", "Brazil"))
+
+    reset_watch_state(session, almanach, gateway=gateway)
+
+    assert plex_data["movies"][0].viewCount == 1  # bleibt gesehen
+    assert plex_data["movies"][1].viewCount == 0
+
+
+def test_reset_skips_missing_entries(session, gateway, almanach):
+    _entries(session, almanach, ("999", "movie", "Weg damit"), ("2", "movie", "Brazil"))
+
+    result = reset_watch_state(session, almanach, gateway=gateway)
+
+    assert result.ok and result.missing == ["Weg damit"]
+
+
+def test_reset_requires_entries(session, gateway, almanach):
+    result = reset_watch_state(session, almanach, gateway=gateway)
+
+    assert not result.ok and "leer" in result.error
+
+
+def test_reset_reports_plex_errors(session, almanach):
+    from app.plex_client import PlexUnavailable
+
+    class BrokenGateway:
+        def connect_as(self, user_id):
+            raise PlexUnavailable("Server offline")
+
+    db.add_to_almanach(session, almanach, "2", "movie", "Brazil")
+
+    result = reset_watch_state(session, almanach, gateway=BrokenGateway())
+
+    assert not result.ok and "offline" in result.error
+
+
+def test_reset_makes_items_return_to_the_playlist(session, gateway, plex_data, almanach):
+    """Nach dem Reset gehört alles wieder in die Playlist."""
+    plex_data["episodes"][0].viewCount = 1
+    plex_data["episodes"][1].viewCount = 1
+    _entries(session, almanach, ("100", "show", "Knight Rider"))
+
+    assert sync_almanach(session, almanach, gateway=gateway).item_count == 0
+
+    reset_watch_state(session, almanach, gateway=gateway)
+
+    assert sync_almanach(session, almanach, gateway=gateway).item_count == 2

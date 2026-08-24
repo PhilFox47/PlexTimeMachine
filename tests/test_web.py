@@ -256,106 +256,210 @@ def test_blacklist_page_shows_weekday(client, session):
 # ---------------------------------------------------------------------------
 
 
-def test_almanach_page_offers_search_and_empty_stock(client):
+@pytest.fixture
+def almanach(session):
+    return db.create_almanach(session, "Alex", "Star Wars")
+
+
+def test_almanach_overview_lists_collections(client, session, almanach):
     body = client.get("/almanach").text
 
-    assert 'name="q"' in body and "Archiv durchsuchen" in body
+    assert "Star Wars" in body
+    assert 'action="/almanach/new"' in body  # Formular zum Anlegen
+    assert f'href="/almanach/{almanach.id}"' in body
+
+
+def test_creating_a_collection_leads_to_its_page(client, session):
+    response = client.post("/almanach/new", data={"name": "Achtziger"}, follow_redirects=False)
+
+    assert response.status_code == 303
+    created = db.list_almanachs(session, "Alex")[0]
+    assert created.name == "Achtziger"
+    assert response.headers["location"] == f"/almanach/{created.id}"
+    assert created.target_playlist_name == "Plex Almanach – Alex · Achtziger"
+
+
+def test_detail_page_shows_name_and_search(client, almanach):
+    body = client.get(f"/almanach/{almanach.id}").text
+
+    assert "Star Wars" in body and 'name="q"' in body
     assert "Noch nichts aufgenommen" in body
-    assert 'href="/almanach"' in body  # Reiter in der Navigation
+    assert "Plex Almanach – Alex · Star Wars" in body
 
 
-def test_almanach_search_lists_hits_with_add_button(client):
-    body = client.get("/almanach/search", params={"q": "rider"}).text
+def test_detail_page_of_another_user_is_not_reachable(client, session):
+    fremd = db.create_almanach(session, "Nina", "Ninas Sammlung")
+
+    assert client.get(f"/almanach/{fremd.id}").status_code == 404
+    assert client.post(f"/almanach/{fremd.id}/remove", data={"rating_key": "1"}).status_code == 404
+
+
+def test_almanach_search_lists_hits_with_add_button(client, almanach):
+    body = client.get(f"/almanach/{almanach.id}/search", params={"q": "rider"}).text
 
     assert "Knight Rider" in body
-    assert 'hx-post="/almanach/add"' in body
+    assert f'hx-post="/almanach/{almanach.id}/add"' in body
     assert "2 Episoden" in body
 
 
-def test_almanach_search_without_query_stays_quiet(client):
-    assert client.get("/almanach/search", params={"q": ""}).text.strip() == ""
+def test_almanach_search_without_query_stays_quiet(client, almanach):
+    assert client.get(f"/almanach/{almanach.id}/search", params={"q": ""}).text.strip() == ""
 
 
-def test_almanach_add_and_remove_update_the_stock(client, session):
+def test_almanach_add_and_remove_update_the_stock(client, session, almanach):
     added = client.post(
-        "/almanach/add",
+        f"/almanach/{almanach.id}/add",
         data={"rating_key": "100", "media_type": "show", "title": "Knight Rider", "year": "1982"},
     )
 
     assert "Knight Rider" in added.text and "Serie" in added.text
-    entry = db.list_almanach(session, "Alex")[0]
+    entry = db.list_almanach_entries(session, almanach.id)[0]
     assert entry.plex_rating_key == "100" and entry.year == 1982
 
-    removed = client.post("/almanach/remove", data={"rating_key": "100"})
+    removed = client.post(f"/almanach/{almanach.id}/remove", data={"rating_key": "100"})
 
     assert "Noch nichts aufgenommen" in removed.text
-    assert db.list_almanach(session, "Alex") == []
+    assert db.list_almanach_entries(session, almanach.id) == []
 
 
-def test_almanach_add_is_idempotent(client, session):
+def test_almanach_add_is_idempotent(client, session, almanach):
     for _ in range(2):
         client.post(
-            "/almanach/add",
+            f"/almanach/{almanach.id}/add",
             data={"rating_key": "100", "media_type": "show", "title": "Knight Rider"},
         )
 
-    assert len(db.list_almanach(session, "Alex")) == 1
+    assert len(db.list_almanach_entries(session, almanach.id)) == 1
 
 
-def test_almanach_preview_shows_release_order(client, session):
-    db.add_to_almanach(session, "Alex", "100", "show", "Knight Rider")
-    db.add_to_almanach(session, "Alex", "1", "movie", "Zurück in die Zukunft")
+def test_almanach_preview_shows_release_order(client, session, almanach):
+    db.add_to_almanach(session, almanach, "100", "show", "Knight Rider")
+    db.add_to_almanach(session, almanach, "1", "movie", "Zurück in die Zukunft")
 
-    body = client.get("/almanach/preview").text
+    body = client.get(f"/almanach/{almanach.id}/preview").text
 
     # Film vom 03.07.1985 steht vor den Episoden vom 20.09.1985
     assert body.index("Zurück in die Zukunft") < body.index("Pilot")
     assert "Mi 03.07.1985" in body
 
 
-def test_almanach_sync_builds_playlist(client, session, gateway):
-    db.add_to_almanach(session, "Alex", "100", "show", "Knight Rider")
+def test_almanach_sync_builds_playlist(client, session, gateway, almanach):
+    db.add_to_almanach(session, almanach, "100", "show", "Knight Rider")
 
-    response = client.post("/almanach/sync")
+    response = client.post(f"/almanach/{almanach.id}/sync")
 
     assert "Almanach erstellt" in response.text
-    assert "Plex Almanach – Alex" in response.text
     playlist = gateway.server.playlists()[0]
-    assert playlist.title == "Plex Almanach – Alex" and len(playlist.items()) == 2
+    assert playlist.title == "Plex Almanach – Alex · Star Wars"
+    assert len(playlist.items()) == 2
 
 
-def test_almanach_sync_without_entries_reports_error(client):
-    response = client.post("/almanach/sync")
+def test_almanach_sync_without_entries_reports_error(client, almanach):
+    response = client.post(f"/almanach/{almanach.id}/sync")
 
     assert "Almanach nicht erstellt" in response.text and "leer" in response.text
 
 
-def test_logbook_separates_almanach_from_time_machine(client, session):
+def test_rename_and_delete_a_collection(client, session, almanach, gateway):
+    db.add_to_almanach(session, almanach, "2", "movie", "Brazil")
+    client.post(f"/almanach/{almanach.id}/sync")
+
+    renamed = client.post(
+        f"/almanach/{almanach.id}/rename", data={"name": "Star Wars komplett"},
+        follow_redirects=False,
+    )
+    assert renamed.status_code == 303
+    session.expire_all()
+    assert db.list_almanachs(session, "Alex")[0].name == "Star Wars komplett"
+    # Die bestehende Plex-Playlist wird mit umbenannt statt verwaist zu bleiben.
+    assert [p.title for p in gateway.server.playlists()] == [
+        "Plex Almanach – Alex · Star Wars komplett"
+    ]
+
+    deleted = client.post(f"/almanach/{almanach.id}/delete", follow_redirects=False)
+
+    assert deleted.status_code == 303
+    assert db.list_almanachs(session, "Alex") == []
+    assert gateway.server.playlists() == []  # Playlist wird mit entfernt
+
+
+def test_stock_update_carries_the_build_button_state(client, session, almanach):
+    """Der Auslöse-Knopf darf nach dem ersten Eintrag nicht deaktiviert bleiben."""
+    empty = client.get(f"/almanach/{almanach.id}").text
+    assert '<button class="btn-launch" type="submit" disabled>' in empty
+
+    added = client.post(
+        f"/almanach/{almanach.id}/add",
+        data={"rating_key": "100", "media_type": "show", "title": "Knight Rider"},
+    ).text
+
+    assert 'hx-swap-oob="true"' in added  # Knopf reist per Out-of-band-Swap mit
+    assert '<button class="btn-launch" type="submit" >' in added
+
+    removed = client.post(f"/almanach/{almanach.id}/remove", data={"rating_key": "100"}).text
+    assert '<button class="btn-launch" type="submit" disabled>' in removed
+
+
+def test_logbook_separates_almanach_from_time_machine(client, session, almanach):
     import datetime
 
     db.set_period(session, "Alex", datetime.date(1985, 1, 1), datetime.date(1985, 12, 31))
     client.post("/sync")
-    db.add_to_almanach(session, "Alex", "100", "show", "Knight Rider")
-    client.post("/almanach/sync")
+    db.add_to_almanach(session, almanach, "100", "show", "Knight Rider")
+    client.post(f"/almanach/{almanach.id}/sync")
 
     body = client.get("/logbook").text
 
     assert "Almanach" in body and "Zeitreise" in body
     assert "nach Auswahl" in body  # Almanach-Zeile ohne Zeitraum
+    assert "Star Wars" in body     # Notiz nennt die Sammlung
 
 
-def test_stock_update_carries_the_build_button_state(client, session):
-    """Der Auslöse-Knopf darf nach dem ersten Eintrag nicht deaktiviert bleiben."""
-    empty = client.get("/almanach").text
-    assert "<button class=\"btn-launch\" type=\"submit\" disabled>" in empty
+# ---------------------------------------------------------------------------
+# Watch-Status zurücksetzen (zweistufige Bestätigung)
+# ---------------------------------------------------------------------------
 
-    added = client.post(
-        "/almanach/add",
-        data={"rating_key": "100", "media_type": "show", "title": "Knight Rider"},
-    ).text
 
-    assert 'hx-swap-oob="true"' in added  # Knopf reist per Out-of-band-Swap mit
-    assert "<button class=\"btn-launch\" type=\"submit\" >" in added
+def test_reset_step_one_only_asks(client, session, gateway, plex_data, almanach):
+    plex_data["episodes"][0].viewCount = 1
+    db.add_to_almanach(session, almanach, "100", "show", "Knight Rider")
 
-    removed = client.post("/almanach/remove", data={"rating_key": "100"}).text
-    assert "<button class=\"btn-launch\" type=\"submit\" disabled>" in removed
+    body = client.get(f"/almanach/{almanach.id}/reset").text
+
+    assert "Wirklich zurücksetzen" in body
+    assert "1</strong> gesehene" in body
+    assert "Ja, 1 Titel zurücksetzen" in body
+    assert "hx-confirm=" in body                       # zweite Rückfrage
+    assert plex_data["episodes"][0].viewCount == 1     # noch nichts passiert
+
+
+def test_reset_needs_the_explicit_confirmation(client, session, plex_data, almanach):
+    plex_data["episodes"][0].viewCount = 1
+    db.add_to_almanach(session, almanach, "100", "show", "Knight Rider")
+
+    body = client.post(f"/almanach/{almanach.id}/reset", data={"confirm": "vielleicht"}).text
+
+    assert "Wirklich zurücksetzen" in body             # fragt erneut
+    assert plex_data["episodes"][0].viewCount == 1     # unverändert
+
+
+def test_reset_executes_and_rebuilds_the_playlist(client, session, gateway, plex_data, almanach):
+    plex_data["episodes"][0].viewCount = 1
+    plex_data["episodes"][1].viewCount = 1
+    db.add_to_almanach(session, almanach, "100", "show", "Knight Rider")
+
+    body = client.post(f"/almanach/{almanach.id}/reset", data={"confirm": "ja"}).text
+
+    assert "Zurückgesetzt" in body and "2 Episoden" in body
+    assert "Playlist neu gebaut" in body
+    assert [e.viewCount for e in plex_data["episodes"][:2]] == [0, 0]
+    assert len(gateway.server.playlists()[0].items()) == 2
+
+
+def test_reset_reports_when_nothing_is_watched(client, session, almanach):
+    db.add_to_almanach(session, almanach, "100", "show", "Knight Rider")
+
+    body = client.get(f"/almanach/{almanach.id}/reset").text
+
+    assert "bereits alles als ungesehen" in body
+    assert "Ja," not in body  # kein Ausführen-Knopf

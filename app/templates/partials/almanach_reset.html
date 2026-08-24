@@ -1,0 +1,45 @@
+{# Erste Bestätigungsstufe: zeigt genau, was passieren würde. #}
+{% if not plan.ok %}
+  <div class="notice error">{{ plan.error }}</div>
+{% elif plan.nothing_to_do %}
+  <div class="notice muted">
+    In »{{ almanach.name }}« gilt bereits alles als ungesehen – nichts zu tun.
+  </div>
+{% else %}
+  <div class="notice danger">
+    <strong>Wirklich zurücksetzen?</strong>
+    In »{{ almanach.name }}« werden
+    {% if plan.watched_episodes %}<strong>{{ plan.watched_episodes }}</strong> gesehene
+      Episode{{ 'n' if plan.watched_episodes != 1 }}{% endif %}
+    {%- if plan.watched_episodes and plan.watched_movies %} und {% endif %}
+    {%- if plan.watched_movies %}<strong>{{ plan.watched_movies }}</strong> gesehene
+      Film{{ 'e' if plan.watched_movies != 1 }}{% endif %}
+    auf „ungesehen“ gesetzt – von insgesamt {{ plan.total_episodes }} Episoden und
+    {{ plan.total_movies }} Filmen im Bestand.
+
+    <p style="margin:10px 0 0">
+      Das ändert den Watch-Status in Plex für <strong>{{ almanach.plex_user_id }}</strong>
+      und lässt sich nicht rückgängig machen. Danach wird die Playlist neu gebaut.
+    </p>
+
+    {% if plan.missing %}
+    <p class="cell-sub" style="margin:8px 0 0">
+      Übersprungen (nicht mehr in der Bibliothek): {{ plan.missing|join(', ') }}
+    </p>
+    {% endif %}
+
+    <div class="week-nav" style="margin-top:14px; padding-top:12px">
+      <button class="btn-week" type="button"
+              onclick="document.getElementById('reset-zone').innerHTML=''">Abbrechen</button>
+      <button class="btn-danger" type="button"
+              hx-post="/almanach/{{ almanach.id }}/reset"
+              hx-vals='{"confirm": "ja"}'
+              hx-target="#reset-zone"
+              hx-swap="innerHTML"
+              hx-indicator="#reset-flux"
+              hx-confirm="Letzte Nachfrage: {{ plan.watched_total }} Titel in »{{ almanach.name }}« wirklich auf ungesehen setzen?">
+        Ja, {{ plan.watched_total }} Titel zurücksetzen
+      </button>
+    </div>
+  </div>
+{% endif %}

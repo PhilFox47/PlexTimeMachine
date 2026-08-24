@@ -4,80 +4,49 @@
 
 {% block content %}
 
-<section class="panel">
-  <h2>Archiv durchsuchen</h2>
+<section class="panel book">
+  <h2>Almanachs{% if current_user %} · {{ current_user }}{% endif %}</h2>
 
   <p class="cell-sub" style="margin-top:0">
-    Titel oder Teil davon eingeben – gefunden wird alles in Film- und
-    Serienbibliothek, dessen Name den Suchbegriff enthält.
+    Jeder Almanach ist eine benannte Sammlung aus Serien und Filmen und bekommt
+    eine eigene Playlist in Release-Order.
   </p>
 
-  {# Ziel, Swap und Indikator erbt das Eingabefeld vom Formular; es feuert
-     zusätzlich beim Tippen, das Formular beim Absenden. #}
-  <form class="search-bar"
-        hx-get="/almanach/search"
-        hx-target="#search-results"
-        hx-swap="innerHTML"
-        hx-indicator="#search-flux"
-        hx-trigger="submit">
-    <input type="search" id="q" name="q" autocomplete="off"
-           placeholder="z. B. Star Wars" aria-label="Suchbegriff"
-           hx-get="/almanach/search"
-           hx-trigger="keyup changed delay:400ms, search">
-    <button class="btn" type="submit">Suchen</button>
-  </form>
-
-  <div id="search-flux" class="flux">
-    <div class="flux-bar"></div>
-    <div class="flux-text">Durchsuche das Archiv …</div>
+  {% if not almanachs %}
+    <div class="empty">Noch kein Almanach angelegt.</div>
+  {% else %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Name</th><th>Playlist</th><th>Zuletzt erstellt</th><th>Titel</th><th></th></tr>
+      </thead>
+      <tbody>
+      {% for item in almanachs %}
+        <tr>
+          <td class="cell-title"><a href="/almanach/{{ item.id }}">{{ item.name }}</a></td>
+          <td class="cell-sub">{{ item.target_playlist_name }}</td>
+          <td class="mono">
+            {%- if item.last_synced_at %}{{ item.last_synced_at|de_datetime }}{% else %}noch nie{% endif %}
+          </td>
+          <td class="cell-title">{{ item.last_item_count }}</td>
+          <td class="list-actions">
+            <a class="btn" href="/almanach/{{ item.id }}">Öffnen</a>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
   </div>
-
-  <div id="search-results"></div>
-</section>
-
-<section class="panel book">
-  <h2>Almanach-Bestand</h2>
-
-  <div id="almanach-stock">
-    {% include "partials/almanach_stock.html" %}
-  </div>
+  {% endif %}
 </section>
 
 <section class="panel">
-  <h2>Ausgabe</h2>
+  <h2>Neuen Almanach anlegen</h2>
 
-  <div class="week-nav" style="margin-top:0; padding-top:0; border-top:0">
-    <span class="nav-label">Release Order</span>
-    <button class="btn-week" type="button"
-            hx-get="/almanach/preview"
-            hx-target="#almanach-preview"
-            hx-swap="innerHTML"
-            hx-indicator="#preview-flux">Vorschau anzeigen</button>
-  </div>
-
-  <div id="preview-flux" class="flux">
-    <div class="flux-bar"></div>
-    <div class="flux-text">Sortiere nach Erscheinungsdatum …</div>
-  </div>
-
-  <div id="almanach-preview"></div>
-
-  <div id="almanach-status"></div>
-
-  {% include "partials/almanach_build.html" %}
-
-  <div id="build-flux" class="flux">
-    <div class="flux-bar"></div>
-    <div class="flux-text">Binde den Almanach …</div>
-  </div>
-
-  <p class="cell-sub" style="margin-bottom:0">
-    Schreibt alle ungesehenen Titel des Bestands nach Erscheinungsdatum sortiert
-    in die feste Playlist
-    {%- if almanach_state and almanach_state.target_playlist_name %}
-      »{{ almanach_state.target_playlist_name }}«{% endif %}.
-    Der Bestand bleibt erhalten – die Playlist wird beim Polling und nach
-    Webhook-Ereignissen automatisch nachgezogen.
-  </p>
+  <form class="search-bar" method="post" action="/almanach/new">
+    <input type="text" name="name" maxlength="80" required
+           placeholder="z. B. Star Wars" aria-label="Name des Almanachs">
+    <button class="btn" type="submit" {% if not users %}disabled{% endif %}>Anlegen</button>
+  </form>
 </section>
 {% endblock %}
