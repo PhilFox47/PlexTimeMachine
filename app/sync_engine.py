@@ -189,9 +189,12 @@ def _date_filters(start: date, end: date) -> dict[str, str]:
     """
     from datetime import timedelta
 
+    # isoformat() statt strftime(): strftime lässt bei Jahren unter 1000 die
+    # führenden Nullen weg ("200-02-06"), was Plex als Filterwert ablehnt – und
+    # die Suche in einen Vollscan der Bibliothek zwingt.
     return {
-        "originallyAvailableAt>>": (start - timedelta(days=1)).strftime("%Y-%m-%d"),
-        "originallyAvailableAt<<": (end + timedelta(days=1)).strftime("%Y-%m-%d"),
+        "originallyAvailableAt>>": (start - timedelta(days=1)).isoformat(),
+        "originallyAvailableAt<<": (end + timedelta(days=1)).isoformat(),
     }
 
 
@@ -340,10 +343,15 @@ class PlaylistOutcome:
 
     playlist: Any = field(default=None, repr=False)
     created: bool = False
+    unchanged: bool = False
 
     @property
     def exists(self) -> bool:
         return self.playlist is not None
+
+
+def _rating_keys(objects: Iterable[Any]) -> list[str]:
+    return [str(getattr(obj, "ratingKey", "")) for obj in objects]
 
 
 def apply_playlist(server: Any, name: str, objects: Sequence[Any]) -> PlaylistOutcome:
@@ -362,6 +370,12 @@ def apply_playlist(server: Any, name: str, objects: Sequence[Any]) -> PlaylistOu
 
     if playlist is not None:
         current = list(playlist.items())
+        if _rating_keys(current) == _rating_keys(objects):
+            # Nichts zu tun. Das ist der Normalfall beim Polling – und spart
+            # richtig etwas: plexapi löscht Playlist-Einträge einzeln, eine
+            # 800er-Playlist würde sonst bei jedem Lauf 800 Anfragen kosten.
+            log.debug("Playlist '%s' ist unverändert – kein Neuschreiben", name)
+            return PlaylistOutcome(playlist=playlist, unchanged=True)
         if current:
             playlist.removeItems(current)
             # Plex entfernt leere Playlists teilweise selbst -> neu suchen.

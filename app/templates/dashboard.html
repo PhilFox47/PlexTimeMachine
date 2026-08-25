@@ -7,6 +7,10 @@
 <section class="panel">
   <h2>Ziel-Zeit</h2>
 
+  {% if period_warning %}
+  <div class="notice error">{{ period_warning }}</div>
+  {% endif %}
+
   <div class="time-circuits">
     <div class="readout start">
       <div class="caption">Zielzeit ab</div>
@@ -28,11 +32,13 @@
         hx-trigger="submit, change delay:250ms">
     <div class="field">
       <label for="start">Start</label>
-      <input type="date" id="start" name="start" value="{{ start.isoformat() }}" required>
+      <input type="date" id="start" name="start" value="{{ start.isoformat() }}"
+             min="1870-01-01" required>
     </div>
     <div class="field">
       <label for="end">Ende</label>
-      <input type="date" id="end" name="end" value="{{ end.isoformat() }}" required>
+      <input type="date" id="end" name="end" value="{{ end.isoformat() }}"
+             min="1870-01-01" required>
     </div>
     <button class="btn" type="submit">Vorschau aktualisieren</button>
   </form>
@@ -67,8 +73,14 @@
     <div class="flux-text">Scanne den Zeitstrom …</div>
   </div>
 
-  <div id="preview">
-    {% include "partials/preview.html" %}
+  {# Wird direkt nach dem Anzeigen der Seite geholt: der Seitenaufbau soll
+     nie auf eine Plex-Abfrage warten. #}
+  <div id="preview"
+       hx-get="/preview?start={{ start.isoformat() }}&amp;end={{ end.isoformat() }}"
+       hx-trigger="load"
+       hx-swap="innerHTML"
+       hx-indicator="#preview-flux">
+    <div class="empty">Vorschau wird geladen …</div>
   </div>
 </section>
 

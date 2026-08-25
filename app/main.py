@@ -134,6 +134,15 @@ def resolve_user(request: Request, users: list[HomeUser]) -> str:
     return users[0].id if users else ""
 
 
+#: Vor 1870 gibt es keine Filme. Ein früheres Jahr ist praktisch immer ein
+#: Vertipper im Datumsfeld – und würde als Zeitraum nur Vollscans auslösen.
+MIN_YEAR = 1870
+
+
+def is_plausible(day: Optional[date]) -> bool:
+    return day is not None and day.year >= MIN_YEAR
+
+
 def parse_period(start: str, end: str) -> tuple[Optional[date], Optional[date], str]:
     try:
         start_date = date.fromisoformat(start)
@@ -142,6 +151,10 @@ def parse_period(start: str, end: str) -> tuple[Optional[date], Optional[date], 
         return None, None, "Bitte ein gültiges Start- und Enddatum wählen."
     if end_date < start_date:
         start_date, end_date = end_date, start_date
+    if not (is_plausible(start_date) and is_plausible(end_date)):
+        return None, None, (
+            f"Das Jahr muss mindestens {MIN_YEAR} sein – bitte das Datum prüfen."
+        )
     return start_date, end_date, ""
 
 
@@ -239,8 +252,18 @@ def dashboard_context(
     state = db.get_or_create_user_state(session, user_id) if user_id else None
 
     start, end = default_period()
+    period_warning = ""
     if state and state.has_period:
-        start, end = state.current_date_start, state.current_date_end
+        if is_plausible(state.current_date_start) and is_plausible(state.current_date_end):
+            start, end = state.current_date_start, state.current_date_end
+        else:
+            # Kann durch einen Vertipper im Datumsfeld entstanden sein. Statt
+            # damit weiterzurechnen: Vorschlag zeigen und Bescheid sagen.
+            period_warning = (
+                f"Der gespeicherte Zeitraum "
+                f"({state.current_date_start} – {state.current_date_end}) ist "
+                f"unbrauchbar; hier steht ein Vorschlag. Bitte neu wählen."
+            )
 
     scheduler = get_scheduler()
     return {
@@ -252,6 +275,7 @@ def dashboard_context(
         "state": state,
         "start": start,
         "end": end,
+        "period_warning": period_warning,
         "preview": preview,
         "status": status,
         "blacklist": db.list_blacklist(session, user_id) if user_id else [],
@@ -279,12 +303,14 @@ def preview_response(request: Request, preview) -> HTMLResponse:
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request, session: Session = Depends(db.get_session)):
-    context = await page_context(request, session)
-    if context["current_user"] and context["state"] and context["state"].has_period:
-        context["preview"] = await compute_preview(
-            session, context["current_user"], context["start"], context["end"]
-        )
-    return templates.TemplateResponse(request, "dashboard.html", context)
+    """Cockpit ausliefern – die Vorschau holt sich die Seite selbst nach.
+
+    Früher wurde sie hier berechnet; bei großen Bibliotheken hing der
+    Seitenaufbau dann sekundenlang an Plex und wirkte wie eine tote Seite.
+    """
+    return templates.TemplateResponse(
+        request, "dashboard.html", await page_context(request, session)
+    )
 
 
 @app.get("/blacklist", response_class=HTMLResponse)

@@ -210,7 +210,26 @@ def test_dashboard_restores_remembered_period(client):
 
     assert 'value="2000-01-31"' in body and 'value="2000-02-07"' in body
     assert body.count('<span class="weekday">Mo</span>') == 2  # beide Zeit-Displays
-    assert "Magnolia" in body  # Vorschau wird direkt mitgeladen
+
+
+def test_dashboard_does_not_wait_for_the_preview(client):
+    """Die Seite kommt sofort; die Vorschau holt sie sich danach selbst.
+
+    Sonst hängt der Seitenaufbau bei großen Bibliotheken an Plex und die
+    Oberfläche wirkt tot.
+    """
+    client.post("/period", data={"start": "2000-01-31", "end": "2000-02-07"})
+
+    body = client.get("/").text
+
+    assert 'hx-get="/preview?start=2000-01-31&amp;end=2000-02-07"' in body
+    assert 'hx-trigger="load"' in body
+    assert "Magnolia" not in body  # noch nicht enthalten ...
+
+    nachgeladen = client.get(
+        "/preview", params={"start": "2000-01-31", "end": "2000-02-07"}
+    ).text
+    assert "Magnolia" in nachgeladen  # ... sondern kommt mit dem Nachladen
 
 
 def test_dashboard_offers_week_stepping(client):
@@ -707,3 +726,35 @@ def test_share_of_a_foreign_collection_is_refused(client, session):
     response = client.post(f"/almanach/{fremd.id}/share", data={"profiles": ["Alex"]})
 
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Vertippte Jahreszahlen
+# ---------------------------------------------------------------------------
+
+
+def test_period_rejects_implausible_years(client, session):
+    """Ein halb getipptes Jahr darf nicht gespeichert werden.
+
+    Das Formular speichert bei jeder Änderung; beim Tippen entsteht dabei
+    kurzzeitig etwa "0200-02-07". Landet das im Zeitraum, weist Plex den
+    Datumsfilter ab und jede Suche wird zum Vollscan der Bibliothek.
+    """
+    client.post("/period", data={"start": "1985-01-01", "end": "1985-12-31"})
+
+    response = client.post("/period", data={"start": "0200-02-07", "end": "0200-02-14"})
+
+    assert "Jahr muss mindestens 1870 sein" in response.text
+    state = db.get_or_create_user_state(session, "Alex")
+    assert state.current_date_start.year == 1985  # der gute Zeitraum bleibt stehen
+
+
+def test_dashboard_recovers_from_a_broken_stored_period(client, session):
+    import datetime
+
+    db.set_period(session, "Alex", datetime.date(200, 2, 7), datetime.date(200, 2, 14))
+
+    body = client.get("/").text
+
+    assert "unbrauchbar" in body and "Bitte neu wählen" in body
+    assert 'value="0200-02-07"' not in body  # es steht ein brauchbarer Vorschlag drin

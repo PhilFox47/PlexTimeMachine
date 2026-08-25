@@ -181,16 +181,19 @@ class FakePlaylist:
         self.deleted = False
         self.posters: list = []
         self.poster_deleted = False
+        self.schreibzugriffe = 0
 
     def items(self) -> list[Any]:
         return list(self._items)
 
     def addItems(self, items) -> None:
         self._items.extend(items)
+        self.schreibzugriffe += 1
 
     def removeItems(self, items) -> None:
         for item in items:
             self._items.remove(item)
+            self.schreibzugriffe += 1  # plexapi löscht jeden Eintrag einzeln
 
     def editTitle(self, title: str, locked: bool = True) -> None:
         self.title = title

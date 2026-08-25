@@ -155,6 +155,12 @@ lässt sich prüfen, ob das greift:
 - **Container-Log**: `docker compose logs -f` zeigt Zeilen wie
   `[poll] Aktualisierung gestartet` und `[poll] Alex: 8 Items -> …`.
 
+Läuft alles sehr zäh, lohnt ein Blick ins Log auf Zeilen wie
+`Suche in 'Serien' … fehlgeschlagen … – nächste Stufe`: dann lehnt Plex den
+Datumsfilter ab und jede Abfrage wird zum Vollscan der Bibliothek. Häufigste
+Ursache ist ein vertippter Zeitraum (etwa Jahr `0200`); ein Jahr vor 1870 wird
+inzwischen abgelehnt, bevor es gespeichert wird.
+
 Zwei Dinge, die kein Fehler sind:
 
 - **Angefangene, aber nicht zu Ende geschaute Titel** gelten in Plex als
