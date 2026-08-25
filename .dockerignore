@@ -1,0 +1,13 @@
+# Alles, was nicht ins Image gehört – ohne diese Liste wandert u. a. die
+# virtuelle Umgebung (mehrere hundert MB) als Build-Kontext zum Daemon.
+.venv/
+venv/
+.git/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+data/
+*.db
+.env
+tests/
+README.md

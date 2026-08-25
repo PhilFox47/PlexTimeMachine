@@ -72,8 +72,15 @@ git clone https://github.com/PhilFox47/PlexTimeMachine.git
 cd PlexTimeMachine
 cp .env.example .env
 $EDITOR .env            # mindestens PTM_PLEX_BASEURL, PTM_PLEX_TOKEN, Bibliotheksnamen
-docker compose up -d
+
+# Der Container läuft als uid 1000 und braucht Schreibrechte im Datenordner:
+mkdir -p data && sudo chown -R 1000:1000 data
+
+docker compose up -d --build
 ```
+
+Nach einem Update immer mit `--build` starten – sonst läuft der alte Stand
+weiter.
 
 Danach läuft die UI auf <http://localhost:8088>. Die SQLite-Datei liegt im
 gemounteten Volume `./data`.
