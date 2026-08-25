@@ -96,6 +96,7 @@ Alle Einstellungen kommen aus Umgebungsvariablen mit dem Präfix `PTM_`
 |---|---|---|
 | `PTM_PLEX_BASEURL` | `http://localhost:32400` | Basis-URL des Plex Media Servers |
 | `PTM_PLEX_TOKEN` | – | Admin-Token des Servers ([Anleitung](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/)) |
+| `PTM_PLEX_TIMEOUT_SECONDS` | `10` | Wartezeit auf Plex, bevor abgebrochen wird |
 | `PTM_MOVIE_LIBRARY` | `Filme` | Name der Film-Bibliothek |
 | `PTM_TV_LIBRARY` | `Serien` | Name der Serien-Bibliothek |
 | `PTM_PLAYLIST_NAME_TEMPLATE` | `Plex Time Machine – {user}` | `{user}` wird durch den Home-User ersetzt |
@@ -120,6 +121,20 @@ Verarbeitet werden `media.scrobble`, `media.rate` und `library.new`; mehrere
 Events kurz hintereinander lösen nur einen Sync aus. Manuell gesetzte
 „gesehen“-Markierungen erzeugen laut Plex **kein** Webhook-Event – dafür ist das
 periodische Polling da.
+
+### Wenn die Seite nicht lädt
+
+Zuerst ins Log schauen: `docker compose logs --tail=50`.
+
+- **`Application startup complete` steht da, die Seite bleibt aber leer:**
+  Die Oberfläche wartet auf Plex. Sie kommt spätestens nach
+  `PTM_PLEX_TIMEOUT_SECONDS` mit einem roten Hinweisbanner – prüfe dann
+  `PTM_PLEX_BASEURL` und `PTM_PLEX_TOKEN`. Der Rest der Seite bleibt in dieser
+  Zeit bedienbar, `/healthz` antwortet immer sofort.
+- **Das Log wiederholt sich alle paar Sekunden:** Der Container startet in einer
+  Schleife neu (`docker compose ps` zeigt dann `Restarting`). Die letzte
+  Fehlerzeile nennt den Grund; der häufigste ist ein Datenverzeichnis, in das
+  der Container nicht schreiben darf – dann hilft `sudo chown -R 1000:1000 ./data`.
 
 ### Wenn nichts nachgezogen wird
 

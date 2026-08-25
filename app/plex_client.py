@@ -25,6 +25,14 @@ log = logging.getLogger(__name__)
 #: Wie lange ein geholter Home-User-Token wiederverwendet wird.
 TOKEN_TTL_SECONDS = 30 * 60
 
+#: Die Liste der Home-User steckt hinter einem plex.tv-Aufruf. Ohne diesen
+#: kurzen Puffer würde jeder Seitenaufruf ins Internet greifen.
+USERS_TTL_SECONDS = 60
+
+#: Ist Plex nicht erreichbar, wird auch das kurz gemerkt – sonst kostet jeder
+#: Seitenaufruf erneut das volle Verbindungs-Timeout.
+USERS_FAILURE_TTL_SECONDS = 15
+
 
 class PlexUnavailable(RuntimeError):
     """Der Plex-Server ist nicht erreichbar oder nicht konfiguriert."""
@@ -53,6 +61,7 @@ class PlexGateway:
         self._admin: Optional[PlexServer] = None
         self._token_cache: dict[str, tuple[str, float]] = {}
         self._server_cache: dict[str, tuple[str, PlexServer]] = {}
+        self._users_cache: Optional[tuple[list[HomeUser], str, float]] = None
 
     # -- Verbindungen ------------------------------------------------------
 
@@ -60,25 +69,42 @@ class PlexGateway:
     def settings(self) -> Settings:
         return self._settings
 
+    def _connect(self, token: str) -> PlexServer:
+        """Verbindung aufbauen – bewusst mit Timeout, damit nichts ewig hängt."""
+        return PlexServer(
+            self._settings.plex_baseurl,
+            token,
+            timeout=self._settings.plex_timeout_seconds,
+        )
+
     def admin_server(self) -> PlexServer:
-        """Verbindung mit dem Admin-Token (cached)."""
+        """Verbindung mit dem Admin-Token (cached).
+
+        Der Verbindungsaufbau passiert bewusst *außerhalb* der Sperre: sonst
+        wartet jeder andere Aufruf (etwa ein Seitenaufruf) so lange, wie das
+        Netzwerk-Timeout dauert.
+        """
         if not self._settings.configured:
             raise PlexUnavailable(
                 "Plex ist nicht konfiguriert – bitte PTM_PLEX_BASEURL und "
                 "PTM_PLEX_TOKEN setzen."
             )
         with self._lock:
+            if self._admin is not None:
+                return self._admin
+
+        try:
+            server = self._connect(self._settings.plex_token)
+        except Unauthorized as exc:
+            raise PlexUnavailable(f"Plex-Token abgelehnt: {exc}") from exc
+        except Exception as exc:  # Netzwerk, DNS, Timeout ...
+            raise PlexUnavailable(
+                f"Plex nicht erreichbar unter {self._settings.plex_baseurl}: {exc}"
+            ) from exc
+
+        with self._lock:
             if self._admin is None:
-                try:
-                    self._admin = PlexServer(
-                        self._settings.plex_baseurl, self._settings.plex_token
-                    )
-                except Unauthorized as exc:
-                    raise PlexUnavailable(f"Plex-Token abgelehnt: {exc}") from exc
-                except Exception as exc:  # Netzwerk, DNS, Timeout ...
-                    raise PlexUnavailable(
-                        f"Plex nicht erreichbar unter {self._settings.plex_baseurl}: {exc}"
-                    ) from exc
+                self._admin = server
             return self._admin
 
     def invalidate(self) -> None:
@@ -87,10 +113,31 @@ class PlexGateway:
             self._admin = None
             self._token_cache.clear()
             self._server_cache.clear()
+            self._users_cache = None
 
     # -- Home-User ---------------------------------------------------------
 
     def home_users(self) -> list[HomeUser]:
+        """Admin + alle Home-User des Servers – kurz zwischengespeichert."""
+        now = time.monotonic()
+        with self._lock:
+            cached = self._users_cache
+        if cached is not None and cached[2] > now:
+            if cached[1]:
+                raise PlexUnavailable(cached[1])
+            return list(cached[0])
+
+        try:
+            users = self._load_home_users()
+        except PlexUnavailable as exc:
+            with self._lock:
+                self._users_cache = ([], str(exc), now + USERS_FAILURE_TTL_SECONDS)
+            raise
+        with self._lock:
+            self._users_cache = (users, "", now + USERS_TTL_SECONDS)
+        return list(users)
+
+    def _load_home_users(self) -> list[HomeUser]:
         """Admin + alle Home-User des Servers.
 
         Fällt auf "nur Admin" zurück, wenn plex.tv nicht erreichbar ist –
@@ -164,7 +211,7 @@ class PlexGateway:
             if cached and cached[0] == token:
                 return cached[1]  # Token unverändert -> Verbindung wiederverwenden
         try:
-            server = PlexServer(self._settings.plex_baseurl, token)
+            server = self._connect(token)
         except Exception as exc:
             raise PlexUnavailable(
                 f"Verbindung als '{user_id}' fehlgeschlagen: {exc}"

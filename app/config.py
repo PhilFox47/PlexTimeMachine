@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     plex_token: str = ""
     movie_library: str = "Filme"
     tv_library: str = "Serien"
+    plex_timeout_seconds: int = 10
     playlist_name_template: str = "Plex Time Machine – {user}"
     almanach_playlist_name_template: str = "Plex Almanach – {user} · {name}"
 
