@@ -296,7 +296,7 @@ def test_creating_a_collection_leads_to_its_page(client, session):
     assert created.name == "Achtziger"
     assert response.headers["location"] == f"/almanach/{created.id}"
     share = db.get_share(session, created.id, "Alex")
-    assert share.target_playlist_name == "Plex Almanach – Alex · Achtziger"
+    assert share.target_playlist_name == "Achtziger – Alex – Almanach"
 
 
 def test_detail_page_shows_name_and_search(client, almanach):
@@ -304,7 +304,7 @@ def test_detail_page_shows_name_and_search(client, almanach):
 
     assert "Star Wars" in body and 'name="q"' in body
     assert "Noch nichts aufgenommen" in body
-    assert "Plex Almanach – Alex · Star Wars" in body
+    assert "Star Wars – Alex – Almanach" in body
 
 
 def test_detail_page_of_another_user_is_not_reachable(client, session):
@@ -370,7 +370,7 @@ def test_almanach_sync_builds_playlist(client, session, gateway, almanach):
 
     assert "Alex" in response.text and "ungesehene Titel" in response.text
     playlist = gateway.server.playlists()[0]
-    assert playlist.title == "Plex Almanach – Alex · Star Wars"
+    assert playlist.title == "Star Wars – Alex – Almanach"
     assert len(playlist.items()) == 2
 
 
@@ -393,7 +393,7 @@ def test_rename_and_delete_a_collection(client, session, almanach, gateway):
     assert db.list_almanachs(session, "Alex")[0].name == "Star Wars komplett"
     # Die bestehende Plex-Playlist wird mit umbenannt statt verwaist zu bleiben.
     assert [p.title for p in gateway.server.playlists()] == [
-        "Plex Almanach – Alex · Star Wars komplett"
+        "Star Wars komplett – Alex – Almanach"
     ]
 
     deleted = client.post(f"/almanach/{almanach.id}/delete", follow_redirects=False)
@@ -633,7 +633,7 @@ def test_share_gives_the_other_profile_its_own_playlist(client, session, gateway
 
     assert response.status_code == 200
     assert "freigegeben" in response.text
-    assert "Plex Almanach – Nina · Star Wars" in response.text
+    assert "Star Wars – Nina – Almanach" in response.text
 
     # Eine Sammlung, zwei Playlists – keine Kopie des Inhalts.
     assert len(db.list_almanachs(session, "Alex")) == 1

@@ -189,10 +189,10 @@ def test_sync_writes_own_playlist_and_logs_journey(session, gateway, almanach, s
     result = sync_share(session, share, trigger="manual", gateway=gateway)
 
     assert result.ok and result.item_count == 3
-    assert result.playlist_name == "Plex Almanach – Alex · Star Wars"
+    assert result.playlist_name == "Star Wars – Alex – Almanach"
 
     playlist = gateway.server.playlists()[0]
-    assert playlist.title == "Plex Almanach – Alex · Star Wars"
+    assert playlist.title == "Star Wars – Alex – Almanach"
     assert len(playlist.items()) == 3
 
     session.refresh(share)
@@ -248,8 +248,8 @@ def test_sync_all_almanachs_covers_every_filled_collection(session, almanach, ga
     results = sync_all_almanachs(session, trigger="poll", gateway=gateway)
 
     assert sorted(r.playlist_name for r in results) == [
-        "Plex Almanach – Alex · Achtziger",
-        "Plex Almanach – Alex · Star Wars",
+        "Achtziger – Alex – Almanach",
+        "Star Wars – Alex – Almanach",
     ]
     assert all(r.trigger == "poll" for r in results)
 
@@ -268,7 +268,7 @@ def test_scheduler_run_syncs_both_playlist_kinds(session, gateway, almanach):
         set_gateway(None)
 
     titles = sorted(p.title for p in gateway.server.playlists())
-    assert titles == ["Plex Almanach – Alex · Star Wars", "Plex Time Machine – Alex"]
+    assert titles == ["Plex Time Machine – Alex", "Star Wars – Alex – Almanach"]
     assert {j.kind for j in db.list_journeys(session, "Alex")} == {"timemachine", "almanach"}
 
 
@@ -306,20 +306,42 @@ def test_rename_updates_the_playlist_name_of_every_profile(session, almanach, ga
 
     assert almanach.name == "Star Wars komplett"
     assert sorted(s.target_playlist_name for s in db.list_shares(session, almanach.id)) == [
-        "Plex Almanach – Alex · Star Wars komplett",
-        "Plex Almanach – Nina · Star Wars komplett",
+        "Star Wars komplett – Alex – Almanach",
+        "Star Wars komplett – Nina – Almanach",
     ]
 
 
-def test_rename_keeps_a_hand_picked_playlist_name(session, almanach, share):
-    share.target_playlist_name = "Meine eigene Playlist"
+def test_playlist_name_always_follows_the_template(session, almanach, share):
+    """Der Playlist-Name wird aus der Vorlage abgeleitet, nicht eingefroren."""
+    share.target_playlist_name = "Irgendein alter Name"
     session.add(share)
     session.commit()
 
     db.rename_almanach(session, almanach, "Neuer Name")
 
     session.refresh(share)
-    assert share.target_playlist_name == "Meine eigene Playlist"
+    assert share.target_playlist_name == "Neuer Name – Alex – Almanach"
+
+
+def test_sync_renames_a_playlist_that_still_carries_the_old_name(
+    session, almanach, share, gateway
+):
+    """Nach einer Schema-Änderung wandert die vorhandene Playlist mit.
+
+    Sonst bliebe sie unter dem alten Namen liegen und der nächste Lauf legte
+    eine zweite daneben an.
+    """
+    db.add_to_almanach(session, almanach, "2", "movie", "Brazil")
+    gateway.server.createPlaylist("Plex Almanach – Alex · Star Wars", items=[])
+    share.target_playlist_name = "Plex Almanach – Alex · Star Wars"
+    session.add(share)
+    session.commit()
+
+    ergebnis = sync_share(session, share, gateway=gateway)
+
+    assert ergebnis.ok
+    assert [p.title for p in gateway.server.playlists()] == ["Star Wars – Alex – Almanach"]
+    assert share.target_playlist_name == "Star Wars – Alex – Almanach"
 
 
 def test_delete_removes_collection_entries_and_shares(session, almanach, gateway):
@@ -491,7 +513,7 @@ def test_sharing_gives_the_other_profile_its_own_playlist(session, almanach, gat
     assert [a.id for a in db.list_almanachs(session, "Nina")] == [almanach.id]
     assert sorted(s.plex_user_id for s in db.list_shares(session, almanach.id)) == ["Alex", "Nina"]
     assert db.get_share(session, almanach.id, "Nina").target_playlist_name == (
-        "Plex Almanach – Nina · Star Wars"
+        "Star Wars – Nina – Almanach"
     )
 
 
@@ -531,8 +553,8 @@ def test_each_profile_keeps_its_own_watch_progress(session, almanach, plex_data)
 
     assert len(alex_playlist.items()) == 2                       # Alex hat nichts gesehen
     assert [i.title for i in nina_playlist.items()] == ["Folge 2"]  # Nina eine Folge
-    assert alex_playlist.title == "Plex Almanach – Alex · Star Wars"
-    assert nina_playlist.title == "Plex Almanach – Nina · Star Wars"
+    assert alex_playlist.title == "Star Wars – Alex – Almanach"
+    assert nina_playlist.title == "Star Wars – Nina – Almanach"
 
 
 def test_sharing_twice_is_harmless(session, almanach, gateway):
@@ -593,8 +615,8 @@ def test_sync_collection_builds_one_playlist_per_profile(session, almanach, plex
 
     assert sorted(r.user_id for r in results) == ["Alex", "Nina"]
     assert all(r.ok for r in results)
-    assert gateway.server.playlists()[0].title == "Plex Almanach – Alex · Star Wars"
-    assert ninas_server.playlists()[0].title == "Plex Almanach – Nina · Star Wars"
+    assert gateway.server.playlists()[0].title == "Star Wars – Alex – Almanach"
+    assert ninas_server.playlists()[0].title == "Star Wars – Nina – Almanach"
 
 
 def test_scheduler_keeps_every_profile_up_to_date(session, almanach, gateway):
@@ -604,8 +626,8 @@ def test_scheduler_keeps_every_profile_up_to_date(session, almanach, gateway):
     results = sync_all_almanachs(session, trigger="poll", gateway=gateway)
 
     assert sorted(r.playlist_name for r in results) == [
-        "Plex Almanach – Alex · Star Wars",
-        "Plex Almanach – Nina · Star Wars",
+        "Star Wars – Alex – Almanach",
+        "Star Wars – Nina – Almanach",
     ]
 
 

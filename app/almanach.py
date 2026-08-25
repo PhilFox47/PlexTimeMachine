@@ -238,9 +238,8 @@ def sync_share(
     if almanach is None:
         return SyncResult(user_id=user_id, trigger=trigger, error="Sammlung nicht gefunden.")
 
-    playlist_name = share.target_playlist_name or get_settings().almanach_playlist_name_for(
-        user_id, almanach.name
-    )
+    playlist_name = get_settings().almanach_playlist_name_for(user_id, almanach.name)
+    bisheriger_name = share.target_playlist_name
     entries = db.list_almanach_entries(session, almanach.id)
 
     if not entries:
@@ -257,6 +256,11 @@ def sync_share(
 
     try:
         server = gateway.connect_as(user_id)
+        if bisheriger_name and bisheriger_name != playlist_name:
+            # Namensschema oder Sammlungsname hat sich geändert: vorhandene
+            # Playlist mitnehmen, statt eine zweite unter neuem Namen anzulegen.
+            if rename_playlist_on(server, bisheriger_name, playlist_name):
+                log.info("Playlist umbenannt: »%s« -> »%s«", bisheriger_name, playlist_name)
         items, missing = collect_almanach_items(server, entries)
         outcome = apply_playlist(server, playlist_name, [i.plex_object for i in items])
         cover_done = apply_cover_after_sync(
@@ -329,6 +333,18 @@ def sync_all_almanachs(
     ]
 
 
+def rename_playlist_on(server: Any, old_name: str, new_name: str) -> bool:
+    """Eine vorhandene Plex-Playlist umbenennen (falls es sie unter dem alten
+    Namen noch gibt)."""
+    if not old_name or old_name == new_name:
+        return False
+    for playlist in server.playlists():
+        if playlist.title == old_name:
+            playlist.editTitle(new_name)
+            return True
+    return False
+
+
 def rename_playlist(
     share: db.AlmanachShare, old_name: str, gateway: Optional[PlexGateway] = None
 ) -> bool:
@@ -337,16 +353,11 @@ def rename_playlist(
     Sonst bliebe die alte Playlist unter dem alten Namen liegen und der nächste
     Sync legte eine zweite an.
     """
-    new_name = share.target_playlist_name
-    if not old_name or old_name == new_name:
+    if not old_name or old_name == share.target_playlist_name:
         return False
     gateway = gateway or get_gateway()
     server = gateway.connect_as(share.plex_user_id)
-    for playlist in server.playlists():
-        if playlist.title == old_name:
-            playlist.editTitle(new_name)
-            return True
-    return False
+    return rename_playlist_on(server, old_name, share.target_playlist_name)
 
 
 def delete_playlist(share: db.AlmanachShare, gateway: Optional[PlexGateway] = None) -> bool:

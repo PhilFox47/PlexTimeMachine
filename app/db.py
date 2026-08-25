@@ -476,19 +476,20 @@ def get_almanach(session: Session, user_id: str, almanach_id: int) -> Optional[A
 
 
 def rename_almanach(session: Session, almanach: Almanach, name: str) -> Almanach:
-    """Umbenennen – die Playlist-Namen aller Profile ziehen mit."""
-    settings = get_settings()
-    old_name = almanach.name
+    """Umbenennen – die Playlist-Namen aller Profile ziehen mit.
+
+    Der Playlist-Name ergibt sich immer aus der Vorlage. Ändert sich die
+    Vorlage (oder der Name der Sammlung), wandern die vorhandenen Playlists
+    beim nächsten Bau mit, statt unter dem alten Namen liegen zu bleiben.
+    """
     almanach.name = name.strip() or almanach.name
     session.add(almanach)
 
     for share in list_shares(session, almanach.id):
-        old_default = settings.almanach_playlist_name_for(share.plex_user_id, old_name)
-        if not share.target_playlist_name or share.target_playlist_name == old_default:
-            share.target_playlist_name = settings.almanach_playlist_name_for(
-                share.plex_user_id, almanach.name
-            )
-            session.add(share)
+        share.target_playlist_name = get_settings().almanach_playlist_name_for(
+            share.plex_user_id, almanach.name
+        )
+        session.add(share)
 
     session.commit()
     session.refresh(almanach)

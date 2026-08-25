@@ -54,7 +54,7 @@ Plex Time Machine – Nina
 ```
 
 Für Almanachs gilt dasselbe – jede Sammlung bekommt ihre eigene Playlist,
-z. B. `Plex Almanach – Alex · Star Wars`.
+z. B. `Star Wars – Alex – Almanach`.
 
 Der Admin-Token holt sich für jeden Home-User über plex.tv einen
 server-spezifischen Token (`MyPlexUser.get_token`). Suche *und* Playlist laufen
@@ -107,7 +107,7 @@ Alle Einstellungen kommen aus Umgebungsvariablen mit dem Präfix `PTM_`
 | `PTM_MOVIE_LIBRARY` | `Filme` | Name der Film-Bibliothek |
 | `PTM_TV_LIBRARY` | `Serien` | Name der Serien-Bibliothek |
 | `PTM_PLAYLIST_NAME_TEMPLATE` | `Plex Time Machine – {user}` | `{user}` wird durch den Home-User ersetzt |
-| `PTM_ALMANACH_PLAYLIST_NAME_TEMPLATE` | `Plex Almanach – {user} · {name}` | Name der Almanach-Playlists (`{name}` = Name der Sammlung) |
+| `PTM_ALMANACH_PLAYLIST_NAME_TEMPLATE` | `{name} – {user} – Almanach` | Name der Almanach-Playlists (`{name}` = Sammlung, `{user}` = Profil) |
 | `PTM_POLL_INTERVAL_MINUTES` | `30` | Periodisches Nachziehen; `0` schaltet es ab |
 | `PTM_WEBHOOK_DEBOUNCE_SECONDS` | `20` | Sammelfenster für Webhook-Events |
 | `PTM_WEBHOOK_TOKEN` | – | Optionales Geheimnis für `/webhook/plex?token=…` |
@@ -209,7 +209,10 @@ eigene Playlist.
 4. **Vorschau anzeigen** – zeigt, was in der Playlist landen würde: alle
    ungesehenen Episoden der gewählten Serien plus die gewählten Filme, streng
    nach Erscheinungsdatum sortiert (Release Order).
-5. **Almanach erstellen** – schreibt das Ergebnis in die Playlist der Sammlung.
+5. **Almanach erstellen** – schreibt das Ergebnis in die Playlist der Sammlung
+   (`<Sammlung> – <Profil> – Almanach`). Ändert sich der Name der Sammlung oder
+   die Namensvorlage, wird die vorhandene Playlist beim nächsten Bau umbenannt
+   statt eine zweite anzulegen.
 
 Ein Almanach lässt sich jederzeit wieder öffnen, **umbenennen** (die
 Plex-Playlist wird mitbenannt) oder **löschen** (die Playlist verschwindet mit).
@@ -251,7 +254,7 @@ Home-User freigeben. Freigeben legt **keine Kopie** an:
   heraus, gilt das sofort für alle freigegebenen Profile – beim nächsten Bau
   und beim Polling.
 - **Der Fortschritt bleibt persönlich.** Jedes Profil bekommt seine eigene
-  Playlist (`Plex Almanach – <Profil> · <Name>`), gefüllt mit dem, was *dieses*
+  Playlist (`<Sammlung> – <Profil> – Almanach`), gefüllt mit dem, was *dieses*
   Profil noch nicht gesehen hat. Aus derselben Sammlung wird so bei einer Person
   eine Playlist mit vier, bei einer anderen mit sechs Titeln.
 - **Zurücksetzen wirkt nur auf das eigene Profil**; die anderen behalten ihren
