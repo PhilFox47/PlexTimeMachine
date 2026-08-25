@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Iterator, Optional, Sequence
 
-from sqlalchemy import inspect, text
+from sqlalchemy import event, inspect, text
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
 from app.config import get_settings
+
+log = logging.getLogger(__name__)
 
 
 def utcnow() -> datetime:
@@ -138,12 +141,44 @@ def get_engine():
     global _engine
     if _engine is None:
         url = get_settings().database_url
-        connect_args = {"check_same_thread": False}
+        # timeout: wie lange auf eine belegte Datenbank gewartet wird, statt
+        # sofort mit "database is locked" abzubrechen (Standard sind 5 s).
+        connect_args = {"check_same_thread": False, "timeout": LOCK_TIMEOUT_SECONDS}
         kwargs = {}
         if url.endswith(":memory:"):
             kwargs["poolclass"] = StaticPool
         _engine = create_engine(url, echo=False, connect_args=connect_args, **kwargs)
+        if url.startswith("sqlite"):
+            event.listen(_engine, "connect", _apply_sqlite_pragmas)
     return _engine
+
+
+#: Solange wartet ein Zugriff, wenn gerade geschrieben wird. Ein langer Sync
+#: (große Playlist) darf die Oberfläche nicht mit einem Fehler abwürgen.
+LOCK_TIMEOUT_SECONDS = 30
+
+
+def _apply_sqlite_pragmas(dbapi_connection, _record) -> None:
+    """WAL und Wartezeit setzen, damit Lesen und Schreiben sich nicht behindern.
+
+    Ohne WAL sperrt ein Schreibvorgang die gesamte Datei: der Hintergrund-Sync
+    ließ damit jeden gleichzeitigen Klick in der Oberfläche mit einem
+    "database is locked" auflaufen. WAL ist nicht auf jedem Dateisystem
+    verfügbar (etwa auf manchen Netzlaufwerken), deshalb nur ein Versuch – die
+    Wartezeit allein hilft schon.
+    """
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute(f"PRAGMA busy_timeout = {LOCK_TIMEOUT_SECONDS * 1000}")
+        cursor.execute("PRAGMA journal_mode = WAL")
+        modus = cursor.fetchone()
+        if modus and str(modus[0]).lower() != "wal":
+            log.warning(
+                "SQLite bleibt im Modus '%s' – WAL ist hier nicht verfügbar.", modus[0]
+            )
+        cursor.execute("PRAGMA synchronous = NORMAL")
+    finally:
+        cursor.close()
 
 
 def reset_engine() -> None:
@@ -300,7 +335,10 @@ def init_db() -> None:
 
 
 def get_session() -> Iterator[Session]:
-    with Session(get_engine()) as session:
+    # expire_on_commit=False: nach einem commit bleiben geladene Objekte
+    # benutzbar. Erst dadurch kann die Sync-Logik ihre Transaktion beenden,
+    # bevor sie minutenlang mit Plex spricht.
+    with Session(get_engine(), expire_on_commit=False) as session:
         yield session
 
 

@@ -143,6 +143,17 @@ Zuerst ins Log schauen: `docker compose logs --tail=50`.
   Fehlerzeile nennt den Grund; der häufigste ist ein Datenverzeichnis, in das
   der Container nicht schreiben darf – dann hilft `sudo chown -R 1000:1000 ./data`.
 
+### Wenn eine Aktion mit "Internal Server Error" endet
+
+Der genaue Grund steht immer im Log (`docker compose logs --tail=50`), meist
+als `Traceback` direkt nach der fehlgeschlagenen Anfrage.
+
+Ein bekannter Fall war `sqlite3.OperationalError: database is locked`: Während
+der Hintergrund-Sync schrieb, lief jeder gleichzeitige Klick nach fünf Sekunden
+in diesen Fehler. Die Datenbank läuft deshalb jetzt im WAL-Modus, wartet bis zu
+30 Sekunden auf eine belegte Datei und gibt ihre Transaktion frei, bevor sie mit
+Plex spricht.
+
 ### Wenn nichts nachgezogen wird
 
 Gesehene Titel verschwinden über zwei Wege: das Polling (`PTM_POLL_INTERVAL_MINUTES`,

@@ -32,7 +32,7 @@ def run_sync_all(trigger: str) -> None:
     gesetztem Zeitraum und jede Almanach-Playlist.
     """
     log.info("[%s] Aktualisierung gestartet", trigger)
-    with Session(db.get_engine()) as session:
+    with Session(db.get_engine(), expire_on_commit=False) as session:
         results = list(sync_all_users(session, trigger=trigger))
         results += sync_all_almanachs(session, trigger=trigger)
     for result in results:

@@ -468,11 +468,15 @@ def sync_user(
         )
 
     start, end = state.current_date_start, state.current_date_end
+    blacklist = db.blacklist_keys(session, user_id)
+    # Transaktion schließen, bevor es zu Plex geht: sonst liegt die Datenbank
+    # für die Dauer der Abfragen fest und die Oberfläche läuft in Sperren.
+    session.commit()
 
     try:
         server = gateway.connect_as(user_id)
         raw = collect_items(gateway, server, start, end)
-        items, dropped = apply_blacklist(raw, db.blacklist_keys(session, user_id))
+        items, dropped = apply_blacklist(raw, blacklist)
         outcome = apply_playlist(server, playlist_name, [i.plex_object for i in items])
         cover_done = apply_cover_after_sync(
             outcome, state.cover_path, state.cover_applied_at is not None

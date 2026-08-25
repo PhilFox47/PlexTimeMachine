@@ -252,6 +252,9 @@ def sync_share(
             error=f"»{almanach.name}« ist leer – bitte zuerst Serien oder Filme aufnehmen.",
         )
 
+    entries = list(entries)
+    session.commit()  # siehe sync_user: nicht mit offener Transaktion zu Plex
+
     try:
         server = gateway.connect_as(user_id)
         items, missing = collect_almanach_items(server, entries)
