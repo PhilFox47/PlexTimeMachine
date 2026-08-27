@@ -350,15 +350,9 @@ def get_session() -> Iterator[Session]:
 def get_or_create_user_state(session: Session, user_id: str) -> UserState:
     state = session.get(UserState, user_id)
     if state is None:
-        state = UserState(
-            plex_user_id=user_id,
-            target_playlist_name=get_settings().playlist_name_for(user_id),
-        )
-        session.add(state)
-        session.commit()
-        session.refresh(state)
-    elif not state.target_playlist_name:
-        state.target_playlist_name = get_settings().playlist_name_for(user_id)
+        # Der Playlist-Name richtet sich nach dem ältesten Titel der Playlist
+        # und steht deshalb erst nach dem ersten Lauf fest.
+        state = UserState(plex_user_id=user_id)
         session.add(state)
         session.commit()
         session.refresh(state)

@@ -76,7 +76,7 @@ def test_run_sync_all_uses_global_gateway(session, gateway):
     finally:
         set_gateway(None)
 
-    assert gateway.server.playlists()[0].title == "Plex Time Machine – Alex"
+    assert gateway.server.playlists()[0].title == "Friday - 22.02.1985 - Time Machine"
     journeys = db.list_journeys(session, "Alex")
     assert journeys and journeys[0].trigger == "poll"
 

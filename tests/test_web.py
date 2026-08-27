@@ -99,7 +99,7 @@ def test_sync_endpoint_builds_playlist(client, session, gateway):
     assert response.status_code == 200
     assert "Zeitreise abgeschlossen" in response.text
     playlist = gateway.server.playlists()[0]
-    assert playlist.title == "Plex Time Machine – Alex"
+    assert playlist.title == "Friday - 22.02.1985 - Time Machine"
     assert len(playlist.items()) == 5
 
 

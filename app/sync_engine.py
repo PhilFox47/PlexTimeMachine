@@ -332,6 +332,18 @@ def _find_playlist(server: Any, name: str) -> Optional[Any]:
     return None
 
 
+def rename_playlist_on(server: Any, old_name: str, new_name: str) -> bool:
+    """Eine vorhandene Plex-Playlist umbenennen (falls es sie unter dem alten
+    Namen noch gibt)."""
+    if not old_name or old_name == new_name:
+        return False
+    for playlist in server.playlists():
+        if playlist.title == old_name:
+            playlist.editTitle(new_name)
+            return True
+    return False
+
+
 def _chunked(items: Sequence[Any], size: int) -> Iterable[Sequence[Any]]:
     for start in range(0, len(items), size):
         yield items[start : start + size]
@@ -456,12 +468,12 @@ def sync_user(
     """Kompletter Sync für einen Home-User – die eigentliche Zeitreise."""
     gateway = gateway or get_gateway()
     state = db.get_or_create_user_state(session, user_id)
-    playlist_name = state.target_playlist_name or get_settings().playlist_name_for(user_id)
+    bisheriger_name = state.target_playlist_name
 
     if not state.has_period:
         return SyncResult(
             user_id=user_id,
-            playlist_name=playlist_name,
+            playlist_name=bisheriger_name,
             trigger=trigger,
             changed=False,
             error="Kein Zeitraum gewählt – bitte zuerst ein Ziel-Datum setzen.",
@@ -477,19 +489,34 @@ def sync_user(
         server = gateway.connect_as(user_id)
         raw = collect_items(gateway, server, start, end)
         items, dropped = apply_blacklist(raw, blacklist)
+
+        # Der Name richtet sich nach dem ältesten Titel, der noch drin ist.
+        # Ist der erste Tag weggesehen, rückt das Datum von selbst weiter –
+        # deshalb steht die Umbenennung hier, im selben Lauf wie das Aufräumen.
+        first_date = items[0].air_date if items else start
+        playlist_name = get_settings().playlist_name_for(user_id, first_date)
+        if bisheriger_name and bisheriger_name != playlist_name:
+            if rename_playlist_on(server, bisheriger_name, playlist_name):
+                log.info(
+                    "Playlist umbenannt: »%s« -> »%s«", bisheriger_name, playlist_name
+                )
+
         outcome = apply_playlist(server, playlist_name, [i.plex_object for i in items])
         cover_done = apply_cover_after_sync(
             outcome, state.cover_path, state.cover_applied_at is not None
         )
     except PlexUnavailable as exc:
         return SyncResult(
-            user_id=user_id, playlist_name=playlist_name, trigger=trigger, error=str(exc)
+            user_id=user_id,
+            playlist_name=bisheriger_name,
+            trigger=trigger,
+            error=str(exc),
         )
     except Exception as exc:  # pragma: no cover - unerwartete plexapi-Fehler
         log.exception("Sync für %s fehlgeschlagen", user_id)
         return SyncResult(
             user_id=user_id,
-            playlist_name=playlist_name,
+            playlist_name=bisheriger_name,
             trigger=trigger,
             error=f"Unerwarteter Fehler: {exc}",
         )

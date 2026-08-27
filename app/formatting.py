@@ -12,6 +12,18 @@ from typing import Optional, Union
 #: Zweibuchstabige Wochentagskürzel, indiziert über ``date.weekday()`` (Mo = 0).
 WEEKDAYS_SHORT = ("Mo", "Di", "Mi", "Do", "Fr", "Sa", "So")
 
+#: Ausgeschriebene Wochentage für den Playlist-Namen. Bewusst englisch: so
+#: sieht die Playlist in Plex aus, wie sie gewünscht wurde ("Monday - …").
+WEEKDAYS_LONG = (
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+)
+
 #: Ein Wochenschritt: Start und Ende wandern um genau sieben Tage weiter,
 #: der Wochentag bleibt damit erhalten.
 WEEK = timedelta(days=7)
@@ -24,6 +36,15 @@ def weekday_short(value: Union[date, datetime, None]) -> str:
     if isinstance(value, datetime):
         value = value.date()
     return WEEKDAYS_SHORT[value.weekday()]
+
+
+def weekday_long(value: Union[date, datetime, None]) -> str:
+    """``Monday``, ``Tuesday`` … – für den Namen der Zeitreise-Playlist."""
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        value = value.date()
+    return WEEKDAYS_LONG[value.weekday()]
 
 
 def format_date(value: Union[date, datetime, None], fallback: str = "—") -> str:

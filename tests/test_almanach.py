@@ -268,7 +268,7 @@ def test_scheduler_run_syncs_both_playlist_kinds(session, gateway, almanach):
         set_gateway(None)
 
     titles = sorted(p.title for p in gateway.server.playlists())
-    assert titles == ["Plex Time Machine – Alex", "Star Wars – Alex – Almanach"]
+    assert titles == ["Friday - 22.02.1985 - Time Machine", "Star Wars – Alex – Almanach"]
     assert {j.kind for j in db.list_journeys(session, "Alex")} == {"timemachine", "almanach"}
 
 

@@ -24,7 +24,9 @@ gepflegte Playlist** aktualisieren. Keine neue Playlist pro Suche.
 - **Blacklist pro Nutzer** – wirkt dauerhaft auf alle künftigen Zeitreisen.
   Bei Serien wird die ganze Serie ausgeschlossen (über `grandparentRatingKey`).
 - **Eine feste Playlist pro Plex-Nutzer** – wird bei jeder Zeitreise geleert und
-  chronologisch neu befüllt.
+  chronologisch neu befüllt. Ihr Name nennt den ältesten Titel darin
+  (`Monday - 24.08.2026 - Time Machine`) und wandert mit, sobald der erste Tag
+  weggesehen ist.
 - **Watched-Status je Betrachter** – jede Zeitreise läuft im Kontext des
   jeweiligen Home-Users (siehe [Multi-User](#multi-user-und-watched-status)).
 - **Automatisches Nachziehen** – periodisches Polling plus optionaler
@@ -49,8 +51,8 @@ sich nicht dynamisch pro Betrachter umbiegen. Deshalb bekommt jede Person genau
 eine dauerhafte Playlist:
 
 ```
-Plex Time Machine – Alex
-Plex Time Machine – Nina
+Friday - 22.02.1985 - Time Machine     (Alex)
+Monday - 24.08.2026 - Time Machine     (Nina)
 ```
 
 Für Almanachs gilt dasselbe – jede Sammlung bekommt ihre eigene Playlist,
@@ -106,7 +108,7 @@ Alle Einstellungen kommen aus Umgebungsvariablen mit dem Präfix `PTM_`
 | `PTM_PLEX_TIMEOUT_SECONDS` | `10` | Wartezeit auf Plex, bevor abgebrochen wird |
 | `PTM_MOVIE_LIBRARY` | `Filme` | Name der Film-Bibliothek |
 | `PTM_TV_LIBRARY` | `Serien` | Name der Serien-Bibliothek |
-| `PTM_PLAYLIST_NAME_TEMPLATE` | `Plex Time Machine – {user}` | `{user}` wird durch den Home-User ersetzt |
+| `PTM_PLAYLIST_NAME_TEMPLATE` | `{weekday} - {date} - Time Machine` | `{weekday}`/`{date}` vom ältesten Titel der Playlist, `{user}` = Profil |
 | `PTM_ALMANACH_PLAYLIST_NAME_TEMPLATE` | `{name} – {user} – Almanach` | Name der Almanach-Playlists (`{name}` = Sammlung, `{user}` = Profil) |
 | `PTM_POLL_INTERVAL_MINUTES` | `30` | Periodisches Nachziehen; `0` schaltet es ab |
 | `PTM_WEBHOOK_DEBOUNCE_SECONDS` | `20` | Sammelfenster für Webhook-Events |
@@ -228,6 +230,27 @@ Zwei bewusste Festlegungen:
   Almanach legt, will sie sehen – die ausdrückliche Auswahl sticht.
 - **Einträge, die aus der Bibliothek verschwinden**, werden beim Bauen
   übersprungen und im Ergebnis benannt, statt den ganzen Lauf abzubrechen.
+
+### Der Name der Zeitreise-Playlist
+
+Die Playlist heißt nach dem **ältesten Titel, der noch drinsteckt**:
+
+```
+Monday - 24.08.2026 - Time Machine
+```
+
+Sind alle Titel vom 24.08. gesehen, fliegen sie beim nächsten Lauf raus – und
+im selben Lauf wird die Playlist umbenannt:
+
+```
+Tuesday - 25.08.2026 - Time Machine
+```
+
+Es entsteht dabei keine zweite Playlist: die vorhandene wird umbenannt. Ohne
+Treffer im Zeitraum wird der Zeitraum-Beginn für den Namen herangezogen (die
+Playlist selbst verschwindet dann ohnehin, weil Plex keine leere halten kann).
+Über `PTM_PLAYLIST_NAME_TEMPLATE` lässt sich das Muster ändern; verfügbar sind
+`{weekday}`, `{date}` und `{user}`.
 
 ### Cover für die Playlists
 

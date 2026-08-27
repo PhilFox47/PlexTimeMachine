@@ -25,6 +25,7 @@ from app.sync_engine import (
     apply_cover_after_sync,
     apply_playlist,
     is_unwatched,
+    rename_playlist_on,
     to_preview_item,
 )
 
@@ -331,18 +332,6 @@ def sync_all_almanachs(
         sync_share(session, share, trigger=trigger, gateway=gateway)
         for share, _almanach in db.shares_with_entries(session)
     ]
-
-
-def rename_playlist_on(server: Any, old_name: str, new_name: str) -> bool:
-    """Eine vorhandene Plex-Playlist umbenennen (falls es sie unter dem alten
-    Namen noch gibt)."""
-    if not old_name or old_name == new_name:
-        return False
-    for playlist in server.playlists():
-        if playlist.title == old_name:
-            playlist.editTitle(new_name)
-            return True
-    return False
 
 
 def rename_playlist(

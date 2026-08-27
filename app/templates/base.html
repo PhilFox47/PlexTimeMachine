@@ -51,7 +51,9 @@
 
   <footer class="footer">
     <span>Plex Time Machine v{{ version }}</span>
-    {% if state and state.target_playlist_name %}<span>Ziel-Playlist: {{ state.target_playlist_name }}</span>{% endif %}
+    {% if state %}<span>Ziel-Playlist:
+      {%- if state.target_playlist_name %} {{ state.target_playlist_name }}
+      {%- else %} wird beim ersten Lauf benannt{% endif %}</span>{% endif %}
     {% if settings.poll_interval_minutes %}
       <span>
         Polling alle {{ settings.poll_interval_minutes }} min

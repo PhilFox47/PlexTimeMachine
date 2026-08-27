@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import date
 from functools import lru_cache
+from typing import Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.formatting import weekday_long
 
 
 class Settings(BaseSettings):
@@ -21,7 +25,7 @@ class Settings(BaseSettings):
     movie_library: str = "Filme"
     tv_library: str = "Serien"
     plex_timeout_seconds: int = 10
-    playlist_name_template: str = "Plex Time Machine – {user}"
+    playlist_name_template: str = "{weekday} - {date} - Time Machine"
     almanach_playlist_name_template: str = "{name} – {user} – Almanach"
 
     # --- Automatisierung --------------------------------------------------
@@ -40,8 +44,18 @@ class Settings(BaseSettings):
         """True, sobald ein Token hinterlegt ist – sonst läuft die UI im Demo-Modus."""
         return bool(self.plex_token and self.plex_baseurl)
 
-    def playlist_name_for(self, user: str) -> str:
-        return self.playlist_name_template.format(user=user)
+    def playlist_name_for(self, user: str, first_date: Optional[date] = None) -> str:
+        """Name der Zeitreise-Playlist.
+
+        ``first_date`` ist das Erscheinungsdatum des ältesten Titels *in* der
+        Playlist – daraus ergeben sich ``{weekday}`` und ``{date}``. Der Name
+        wandert damit mit, sobald der früheste Titel weggesehen ist.
+        """
+        return self.playlist_name_template.format(
+            user=user,
+            weekday=weekday_long(first_date),
+            date=first_date.strftime("%d.%m.%Y") if first_date else "",
+        ).strip()
 
     def almanach_playlist_name_for(self, user: str, name: str) -> str:
         """Playlist-Name eines benannten Almanachs.

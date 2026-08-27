@@ -279,7 +279,7 @@ def test_sync_user_writes_state_and_logbook(session, gateway):
 
     assert result.ok
     assert result.item_count == 5
-    assert result.playlist_name == "Plex Time Machine – Alex"
+    assert result.playlist_name == "Friday - 22.02.1985 - Time Machine"
 
     state = db.get_or_create_user_state(session, "Alex")
     assert state.last_item_count == 5
@@ -332,3 +332,89 @@ def test_sync_reversed_period_is_normalised(session, gateway):
 
     assert state.current_date_start == ERA_START
     assert state.current_date_end == ERA_END
+
+
+# ---------------------------------------------------------------------------
+# Name der Zeitreise-Playlist
+# ---------------------------------------------------------------------------
+
+
+def test_playlist_is_named_after_its_earliest_title(session, gateway):
+    """Wochentag und Datum stammen vom ältesten Titel *in* der Playlist."""
+    db.set_period(session, "Alex", ERA_START, ERA_END)
+
+    result = sync_user(session, "Alex", gateway=gateway)
+
+    # Ältester Titel im Zeitraum ist Brazil vom 22.02.1985, einem Freitag.
+    assert result.playlist_name == "Friday - 22.02.1985 - Time Machine"
+    assert [p.title for p in gateway.server.playlists()] == [
+        "Friday - 22.02.1985 - Time Machine"
+    ]
+
+
+def test_playlist_is_renamed_once_the_first_day_is_watched(session, gateway, plex_data):
+    """Der Kern: gesehen -> raus -> Name rückt auf den nächsten Titel vor.
+
+    Das passiert im selben Lauf, der auch die gesehenen Titel entfernt.
+    """
+    db.set_period(session, "Alex", ERA_START, ERA_END)
+    sync_user(session, "Alex", gateway=gateway)
+    assert gateway.server.playlists()[0].title == "Friday - 22.02.1985 - Time Machine"
+
+    # Alles vom 22.02. weggesehen (Brazil und die A-Team-Folge) ...
+    plex_data["movies"][1].viewCount = 1
+    plex_data["episodes"][2].viewCount = 1
+
+    result = sync_user(session, "Alex", trigger="poll", gateway=gateway)
+
+    # ... nächster Titel ist Zurück in die Zukunft vom 03.07.1985, ein Mittwoch.
+    assert result.playlist_name == "Wednesday - 03.07.1985 - Time Machine"
+    playlists = gateway.server.playlists()
+    assert len(playlists) == 1, "es darf keine zweite Playlist entstehen"
+    assert playlists[0].title == "Wednesday - 03.07.1985 - Time Machine"
+    assert "Brazil" not in [i.title for i in playlists[0].items()]
+    assert session.get(db.UserState, "Alex").target_playlist_name == (
+        "Wednesday - 03.07.1985 - Time Machine"
+    )
+
+
+def test_playlist_name_survives_an_unchanged_run(session, gateway):
+    """Ohne Änderung darf auch nicht umbenannt werden."""
+    db.set_period(session, "Alex", ERA_START, ERA_END)
+    sync_user(session, "Alex", gateway=gateway)
+    playlist = gateway.server.playlists()[0]
+    playlist.schreibzugriffe = 0
+
+    sync_user(session, "Alex", trigger="poll", gateway=gateway)
+
+    assert playlist.title == "Friday - 22.02.1985 - Time Machine"
+    assert playlist.schreibzugriffe == 0
+
+
+def test_name_falls_back_to_the_period_start_without_titles(session, gateway, plex_data):
+    """Ohne Treffer gibt es keine Playlist – der gemerkte Name bleibt brauchbar."""
+    for film in plex_data["movies"]:
+        film.viewCount = 1
+    for folge in plex_data["episodes"]:
+        folge.viewCount = 1
+    db.set_period(session, "Alex", ERA_START, ERA_END)
+
+    result = sync_user(session, "Alex", gateway=gateway)
+
+    assert result.ok and result.item_count == 0
+    assert gateway.server.playlists() == []
+    # 01.01.1985 war ein Dienstag
+    assert result.playlist_name == "Tuesday - 01.01.1985 - Time Machine"
+
+
+def test_template_can_still_include_the_profile(session, gateway, monkeypatch):
+    from app import config
+
+    monkeypatch.setenv("PTM_PLAYLIST_NAME_TEMPLATE", "{user}: {weekday} {date}")
+    config.get_settings.cache_clear()
+    try:
+        db.set_period(session, "Alex", ERA_START, ERA_END)
+        result = sync_user(session, "Alex", gateway=gateway)
+        assert result.playlist_name == "Alex: Friday 22.02.1985"
+    finally:
+        config.get_settings.cache_clear()
