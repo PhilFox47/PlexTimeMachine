@@ -39,7 +39,14 @@ FADE_SECONDS = 0.4
 OUTRO_SECONDS = 1.0
 
 #: Der mitgelieferte Klang unter der Datumsrolle.
-DEFAULT_SOUND = Path(__file__).resolve().parent / "assets" / "transition_chime.aac"
+ASSETS = Path(__file__).resolve().parent / "assets"
+DEFAULT_SOUND = ASSETS / "transition_chime.aac"
+
+#: Liegen diese Dateien vor, werden sie statt des gezeichneten Zeichens genutzt.
+#: ``logo.png`` ist der komplette Schriftzug für oben links, ``logo_mark.png``
+#: nur das Zeichen für die Eckgrafik. Am besten PNG mit durchsichtigem Grund.
+DEFAULT_LOGO = ASSETS / "logo.png"
+DEFAULT_LOGO_MARK = ASSETS / "logo_mark.png"
 
 SENDER = "FUCHSBAU"
 SENDER_2 = "STREAMING"
@@ -281,6 +288,45 @@ _MARKE_DUNKEL = [(0.51, 0.335), (1.00, 0.00), (1.00, 0.656)]
 _MARKE_VERHAELTNIS = 0.86   # Höhe zu Breite
 
 
+def _trim(img: Image.Image) -> Image.Image:
+    """Leeren Rand wegschneiden – durchsichtig oder weiß.
+
+    Logodateien haben oft viel Luft um die Marke; ohne Beschnitt schrumpft das
+    Zeichen beim Einpassen auf einen Krümel.
+    """
+    alpha = img.getchannel("A")
+    if alpha.getextrema()[0] < 255:              # es gibt durchsichtige Stellen
+        kasten = alpha.getbbox()
+    else:                                        # deckend: dann eben das Weiß
+        grau = img.convert("L").point(lambda v: 0 if v > 246 else 255)
+        kasten = grau.getbbox()
+    return img.crop(kasten) if kasten else img
+
+
+def load_logo(pfad: Optional[str], standard: Path) -> Optional[Image.Image]:
+    """Eine Logodatei laden – None, wenn keine da ist oder sie abgeschaltet wurde.
+
+    ``off`` erzwingt das selbst gezeichnete Zeichen.
+    """
+    if pfad and pfad.strip().lower() in {"off", "aus", "none", "-"}:
+        return None
+    datei = Path(pfad.strip()) if pfad and pfad.strip() else standard
+    if not datei.exists():
+        return None
+    try:
+        return _trim(Image.open(datei).convert("RGBA"))
+    except Exception as exc:  # pragma: no cover - kaputte Datei
+        log.warning("Logo %s nicht lesbar (%s) – nutze das gezeichnete Zeichen", datei, exc)
+        return None
+
+
+def _fit(img: Image.Image, max_w: float, max_h: float) -> Image.Image:
+    """Seitenverhältnis wahren und in den erlaubten Kasten legen."""
+    faktor = min(max_w / img.width, max_h / img.height)
+    return img.resize((max(1, int(img.width * faktor)), max(1, int(img.height * faktor))),
+                      Image.LANCZOS)
+
+
 def mark(width: int, hell=ORANGE_HELL, tief=ORANGE_TIEF) -> Image.Image:
     """Das Fuchsbau-Zeichen als RGBA-Bild."""
     w = max(4, int(width))
@@ -317,7 +363,14 @@ def mark(width: int, hell=ORANGE_HELL, tief=ORANGE_TIEF) -> Image.Image:
 class Stage:
     """Maße, Schriften und der feste Bühnenhintergrund."""
 
-    def __init__(self, height: int = 1080):
+    def __init__(
+        self,
+        height: int = 1080,
+        logo: Optional[str] = None,
+        logo_mark: Optional[str] = None,
+    ):
+        self.logo = load_logo(logo, DEFAULT_LOGO)
+        self.logo_mark = load_logo(logo_mark, DEFAULT_LOGO_MARK)
         self.h = int(height)
         self.w = int(round(self.h * 16 / 9))
         h = self.h
@@ -357,7 +410,10 @@ class Stage:
             d.line([(0, y), (self.w, y)], fill=(int(INK[0] * f), int(INK[1] * f), int(INK[2] * f)))
 
         # Die Marke noch einmal groß als Eckgrafik – angeschnitten, gedämpft.
-        ecke = mark(int(0.40 * self.w), hell=(230, 146, 12), tief=(180, 68, 8))
+        if self.logo_mark is not None:
+            ecke = _fit(self.logo_mark, 0.40 * self.w, 0.40 * self.w)
+        else:
+            ecke = mark(int(0.40 * self.w), hell=(230, 146, 12), tief=(180, 68, 8))
         ecke = ecke.rotate(20, expand=True, resample=Image.BICUBIC)
         img.paste(ecke, (int(-0.115 * self.w), int(0.615 * self.h)), ecke)
 
@@ -374,7 +430,16 @@ class Stage:
     # -- Kopf --------------------------------------------------------------
 
     def lockup(self, img: Image.Image) -> None:
-        """Zeichen und Schriftzug oben links."""
+        """Zeichen und Schriftzug oben links.
+
+        Liegt eine echte Logodatei vor, wird sie eingepasst; sonst entstehen
+        Zeichen und Schriftzug wie gehabt aus Polygonen und Text.
+        """
+        if self.logo is not None:
+            fertig = _fit(self.logo, 0.275 * self.w, 0.145 * self.h)
+            img.paste(fertig, (int(self.rand), int(self.marke_oben)), fertig)
+            return
+
         zeichen = mark(int(self.marke_breite))
         img.paste(zeichen, (int(self.rand), int(self.marke_oben)), zeichen)
 
@@ -837,13 +902,15 @@ def render_clip(
     height: int = 1080,
     ffmpeg: str = "ffmpeg",
     sound: Optional[str] = None,
+    logo: Optional[str] = None,
+    logo_mark: Optional[str] = None,
 ) -> Path:
     """Einen Übergang als MP4 schreiben (H.264, mit Tonspur).
 
     Auch ohne Klangdatei bekommt der Clip eine stille Tonspur: manche
     Plex-Clients stolpern über Videos ganz ohne Audio.
     """
-    stage = Stage(height)
+    stage = Stage(height, logo=logo, logo_mark=logo_mark)
     board = Board(stage, spec)
     leinwand = LedCanvas(height)
     target = Path(target)

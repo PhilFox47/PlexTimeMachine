@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     #: Klang unter der Datumsrolle: leer = mitgelieferter Chime, "off" = stumm,
     #: sonst ein Pfad auf eine eigene Datei.
     transition_sound: str = ""
+    #: Logodateien für die Tafel. Leer = app/assets/logo.png bzw.
+    #: app/assets/logo_mark.png, "off" = gezeichnetes Zeichen.
+    transition_logo: str = ""
+    transition_logo_mark: str = ""
     #: Nur für dieses Profil werden Clips gerendert – leer = für alle. Das
     #: Rendern kostet Minuten, und gebraucht wird es praktisch nur beim
     #: Hauptprofil.

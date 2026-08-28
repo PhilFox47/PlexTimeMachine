@@ -1,0 +1,13 @@
+# Hier gehören die beiden Logodateien hin, wenn sie genutzt werden sollen:
+#
+#   logo.png        kompletter Schriftzug (Zeichen + FUCHSBAU STREAMING),
+#                   erscheint oben links auf der Tafel
+#   logo_mark.png   nur das Zeichen, wird groß und angeschnitten zur
+#                   Eckgrafik unten links
+#
+# Am besten PNG mit durchsichtigem Hintergrund. Leerer Rand wird automatisch
+# weggeschnitten, die Datei darf also beliebig viel Luft haben.
+#
+# Fehlen die Dateien, zeichnet die Software das Zeichen selbst – es geht also
+# auch ohne. Über PTM_TRANSITION_LOGO bzw. PTM_TRANSITION_LOGO_MARK lassen sich
+# stattdessen Pfade außerhalb des Images angeben (z. B. /app/data/logo.png).

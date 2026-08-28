@@ -244,6 +244,63 @@ def test_render_produces_a_playable_clip(tmp_path):
     assert "Audio: aac" in beschreibung         # ohne Tonspur stolpern manche Clients
 
 
+# ---------------------------------------------------------------------------
+# Logo
+# ---------------------------------------------------------------------------
+
+
+def _logo_datei(pfad, groesse=(1200, 600), farbe=(255, 0, 200, 255)):
+    """Eine Logodatei wie die echten: Marke links, viel Luft drumherum."""
+    from PIL import Image, ImageDraw
+
+    bild = Image.new("RGBA", groesse, (0, 0, 0, 0))
+    ImageDraw.Draw(bild).rectangle([100, 150, 400, 350], fill=farbe)
+    bild.save(pfad)
+    return pfad
+
+
+def test_a_logo_file_is_trimmed_and_used(tmp_path):
+    """Die echte Datei hat viel leeren Rand – ungeschnitten bliebe ein Krümel."""
+    datei = _logo_datei(tmp_path / "logo.png")
+
+    stage = transitions.Stage(360, logo=str(datei), logo_mark="off")
+
+    assert stage.logo.size == (301, 201)         # auf die Marke beschnitten
+    bild = stage.base()
+    ecke = bild.crop((0, 0, int(0.3 * bild.width), int(0.2 * bild.height)))
+    farben = {f for _, f in ecke.getcolors(60000)}
+    assert (255, 0, 200) in farben               # das Logo steht oben links
+
+
+def test_a_missing_logo_falls_back_to_the_drawn_mark(tmp_path):
+    stage = transitions.Stage(360, logo=str(tmp_path / "gibtsnicht.png"),
+                              logo_mark=str(tmp_path / "auch.png"))
+
+    assert stage.logo is None and stage.logo_mark is None
+    stage.lockup(stage.base())                   # zeichnet, statt zu scheitern
+
+
+def test_off_forces_the_drawn_mark(tmp_path):
+    _logo_datei(tmp_path / "logo.png")
+
+    stage = transitions.Stage(360, logo="off")
+
+    assert stage.logo is None
+
+
+def test_a_logo_without_transparency_is_trimmed_by_its_white_border(tmp_path):
+    """Auch eine deckend weiße Datei soll nicht als weißer Kasten landen."""
+    from PIL import Image, ImageDraw
+
+    bild = Image.new("RGBA", (800, 400), (255, 255, 255, 255))
+    ImageDraw.Draw(bild).rectangle([200, 100, 500, 300], fill=(230, 130, 30, 255))
+    bild.save(tmp_path / "weiss.png")
+
+    geladen = transitions.load_logo(str(tmp_path / "weiss.png"), transitions.DEFAULT_LOGO)
+
+    assert geladen.size == (301, 201)
+
+
 def test_the_chime_ships_with_the_app():
     """Ohne die Datei bliebe jeder Übergang stumm – sie gehört ins Image."""
     assert transitions.DEFAULT_SOUND.exists()

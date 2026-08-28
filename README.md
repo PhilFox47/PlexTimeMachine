@@ -136,6 +136,8 @@ Alle Einstellungen kommen aus Umgebungsvariablen mit dem Präfix `PTM_`
 | `PTM_TRANSITION_SCAN_DELAY_SECONDS` | `300` | Pause nach dem Rendern, bevor Plex eingelesen wird |
 | `PTM_TRANSITION_HEIGHT` | `1080` | Auflösung der Clips (`720` rendert etwa dreimal schneller) |
 | `PTM_TRANSITION_SOUND` | – | Klang unter der Datumsrolle: leer = mitgelieferter Chime, `off` = stumm, sonst ein Pfad |
+| `PTM_TRANSITION_LOGO` | – | Logo oben links (leer = `app/assets/logo.png`, `off` = gezeichnet) |
+| `PTM_TRANSITION_LOGO_MARK` | – | Zeichen für die Eckgrafik (leer = `app/assets/logo_mark.png`) |
 | `PTM_FFMPEG_BINARY` | `ffmpeg` | Pfad zum FFmpeg-Binary (im Docker-Image enthalten) |
 
 Die Playlist enthält immer **alle** Treffer – das Limit betrifft nur die Anzeige.
@@ -355,6 +357,20 @@ Tage ohne Treffer kommen nicht vor – der Roll springt direkt auf den nächsten
 Tag mit Inhalt, der erste Clip einer Woche startet am Beginn des gewählten
 Zeitraums.
 
+**Eigenes Logo:** Ohne weiteres Zutun zeichnet die Software das Zeichen selbst.
+Wer die echten Dateien hat, legt sie ab als
+
+| Datei | wofür |
+|---|---|
+| `app/assets/logo.png` | kompletter Schriftzug, oben links |
+| `app/assets/logo_mark.png` | nur das Zeichen, wird zur Eckgrafik unten links |
+
+**PNG mit durchsichtigem Hintergrund** funktioniert am besten; leerer Rand wird
+automatisch weggeschnitten, die Datei darf also beliebig viel Luft haben. Wer
+nicht neu bauen will, legt die Dateien stattdessen ins `./data`-Volume und zeigt
+mit `PTM_TRANSITION_LOGO=/app/data/logo.png` darauf. `off` erzwingt wieder das
+gezeichnete Zeichen.
+
 **Ton:** Unter der Datumsrolle liegt der mitgelieferte Chime
 (`app/assets/transition_chime.aac`, knapp neun Sekunden). Ist der Clip länger,
 wird mit Stille aufgefüllt; ist er kürzer, endet der Klang mit dem Bild. Eine
@@ -508,7 +524,7 @@ app/
 ├── slots.py         Sendeplätze: Zeiten lesen, Tagesreihenfolge bestimmen
 ├── logbuffer.py     Ringpuffer der jüngsten Logzeilen für die Oberfläche
 ├── transitions.py   Rendert die Übergangsclips (Pillow + FFmpeg)
-├── assets/          Der Chime unter der Datumsrolle
+├── assets/          Chime unter der Datumsrolle, optional die Logodateien
 ├── transition_build.py  Clips planen, bauen, Plex scannen, einweben
 ├── scheduler.py     APScheduler: Polling + entprellte Webhook-Syncs
 ├── templates/       Jinja2 (dashboard, blacklist, logbook, partials)
