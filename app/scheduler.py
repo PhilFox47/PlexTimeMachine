@@ -20,6 +20,11 @@ log = logging.getLogger(__name__)
 POLL_JOB_ID = "ptm-poll"
 WEBHOOK_JOB_ID = "ptm-webhook"
 TRANSITION_JOB_PREFIX = "ptm-transitions-"
+PUBLISH_JOB_PREFIX = "ptm-transitions-publish-"
+
+#: So oft wird versucht, die frisch gerenderten Clips in Plex wiederzufinden,
+#: bevor die Playlist auch ohne die fehlenden gebaut wird.
+MAX_PUBLISH_ATTEMPTS = 3
 
 #: Kurz nach dem Start einmal nachziehen – holt nach, was während der Auszeit
 #: gesehen wurde, und macht sichtbar, dass das Polling läuft.
@@ -56,7 +61,58 @@ def run_sync_all(trigger: str) -> None:
 
 
 def run_transition_build(user_id: str) -> None:
-    """Clips erzeugen, Plex einlesen lassen, Playlist neu bauen."""
+    """Clips erzeugen – mehr nicht.
+
+    Das Einlesen in Plex passiert bewusst erst später (``run_transition_publish``):
+    frisch geschriebene Dateien meldet Plex sonst gern als unvollständig zurück.
+    """
+    from app import transition_build
+    from app.plex_client import get_gateway
+    from app.sync_engine import apply_blacklist, collect_items
+
+    titel: list[str] = []
+    with Session(db.get_engine(), expire_on_commit=False) as session:
+        state = db.get_or_create_user_state(session, user_id)
+        if not state.has_period:
+            return
+        periode = (state.current_date_start, state.current_date_end)
+
+        gateway = get_gateway()
+        try:
+            server = gateway.connect_as(user_id)
+            roh = collect_items(gateway, server, *periode)
+            items, _ = apply_blacklist(roh, db.blacklist_keys(session, user_id))
+            session.commit()
+            log.info("Übergänge für %s werden gerendert …", user_id)
+            titel = transition_build.build_clips(session, user_id, items, periode, gateway)
+        except Exception as exc:
+            log.exception("Übergänge für %s fehlgeschlagen: %s", user_id, exc)
+            return
+
+    if not titel:
+        log.info("Für %s gab es nichts zu rendern", user_id)
+        return
+
+    verzoegerung = get_settings().transition_scan_delay_seconds
+    log.info(
+        "%s Übergänge für %s gerendert – Plex wird in %s Sekunden eingelesen",
+        len(titel),
+        user_id,
+        verzoegerung,
+    )
+    scheduler = get_scheduler()
+    if scheduler is None:  # ohne laufenden Scheduler (z. B. im Test) direkt weiter
+        run_transition_publish(user_id)
+        return
+    scheduler.request_transition_publish(user_id, delay=verzoegerung)
+
+
+def run_transition_publish(user_id: str, attempt: int = 1) -> None:
+    """Bibliothek einlesen, auf die Clips warten, Playlist neu bauen.
+
+    Taucht noch nicht alles auf, wird es später erneut versucht – erst beim
+    letzten Versuch wird die Playlist auch ohne die fehlenden Clips gebaut.
+    """
     from app import transition_build
     from app.plex_client import get_gateway
     from app.sync_engine import sync_user
@@ -65,27 +121,43 @@ def run_transition_build(user_id: str) -> None:
         state = db.get_or_create_user_state(session, user_id)
         if not state.has_period:
             return
-        periode = (state.current_date_start, state.current_date_end)
-
-        from app.sync_engine import apply_blacklist, collect_items
-
-        gateway = get_gateway()
-        try:
-            server = gateway.connect_as(user_id)
-            roh = collect_items(gateway, server, *periode)
-            items, _ = apply_blacklist(roh, db.blacklist_keys(session, user_id))
-            session.commit()
-            titel = transition_build.build_clips(session, user_id, items, periode, gateway)
-            if titel:
-                transition_build.rescan_library(server)
-                transition_build.find_clips(server, titel, warten=True)
-        except Exception as exc:
-            log.warning("Übergänge für %s fehlgeschlagen: %s", user_id, exc)
+        titel = [clip.title for clip in db.list_transition_clips(session, user_id)]
+        if not titel:
             return
+        session.commit()
 
-        if titel:
-            log.info("%s Übergänge fertig – Playlist wird neu gebaut", len(titel))
-            sync_user(session, user_id, trigger="transitions")
+        try:
+            server = get_gateway().connect_as(user_id)
+            transition_build.rescan_library(server)
+            gefunden = transition_build.find_clips(server, titel, warten=True)
+        except Exception as exc:
+            log.warning("Übergänge für %s nicht auffindbar: %s", user_id, exc)
+            gefunden = {}
+
+        fehlend = [name for name in titel if name not in gefunden]
+        if fehlend and attempt < MAX_PUBLISH_ATTEMPTS:
+            scheduler = get_scheduler()
+            if scheduler is not None:
+                verzoegerung = get_settings().transition_scan_delay_seconds
+                log.info(
+                    "%s von %s Übergängen fehlen in Plex – Versuch %s in %s Sekunden",
+                    len(fehlend),
+                    len(titel),
+                    attempt + 1,
+                    verzoegerung,
+                )
+                scheduler.request_transition_publish(
+                    user_id, attempt=attempt + 1, delay=verzoegerung
+                )
+                return
+
+        log.info(
+            "Playlist von %s wird mit %s von %s Übergängen neu gebaut",
+            user_id,
+            len(gefunden),
+            len(titel),
+        )
+        sync_user(session, user_id, trigger="transitions")
 
 
 class SyncScheduler:
@@ -162,6 +234,29 @@ class SyncScheduler:
 
     async def _build_transitions(self, user_id: str) -> None:
         await asyncio.to_thread(run_transition_build, user_id)
+
+    def request_transition_publish(
+        self, user_id: str, attempt: int = 1, delay: Optional[int] = None
+    ) -> None:
+        """Nach der Wartezeit Plex einlesen lassen und die Playlist neu bauen.
+
+        Die Pause gibt Plex Zeit, die frisch geschriebenen Dateien überhaupt
+        als fertig zu erkennen.
+        """
+        if delay is None:
+            delay = self.settings.transition_scan_delay_seconds
+        self.scheduler.add_job(
+            self._publish_transitions,
+            "date",
+            args=[user_id, attempt],
+            run_date=datetime.now(timezone.utc) + timedelta(seconds=max(0, delay)),
+            id=f"{PUBLISH_JOB_PREFIX}{user_id}",
+            replace_existing=True,
+            misfire_grace_time=600,
+        )
+
+    async def _publish_transitions(self, user_id: str, attempt: int) -> None:
+        await asyncio.to_thread(run_transition_publish, user_id, attempt)
 
     def request_webhook_sync(self) -> datetime:
         """Sync nach Webhook-Event anstossen – mehrere Events werden entprellt."""

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -218,6 +218,8 @@ def uebergaenge_an(tmp_path, monkeypatch):
     monkeypatch.setenv("PTM_TRANSITION_LIBRARY", "Zeitreise-Übergänge")
     monkeypatch.setenv("PTM_TRANSITION_HEIGHT", "360")
     monkeypatch.setenv("PTM_TRANSITION_MAX_CLIPS", "2")
+    monkeypatch.setenv("PTM_TRANSITION_USER", "Alex")
+    monkeypatch.setenv("PTM_TRANSITION_SCAN_DELAY_SECONDS", "0")
     if ffmpeg_pfad():
         monkeypatch.setenv("PTM_FFMPEG_BINARY", ffmpeg_pfad())
     config.get_settings.cache_clear()
@@ -309,3 +311,174 @@ def test_a_missing_library_does_not_break_the_sync(session, gateway, uebergaenge
     ergebnis = sync_user(session, "Alex", gateway=gateway)   # server ohne Bibliothek
 
     assert ergebnis.ok and ergebnis.item_count == 5
+
+
+# ---------------------------------------------------------------------------
+# Nur ein Profil bekommt Clips
+# ---------------------------------------------------------------------------
+
+
+def test_only_the_configured_profile_gets_transitions(uebergaenge_an):
+    from app.config import get_settings
+
+    einstellungen = get_settings()
+    assert einstellungen.transitions_for("Alex")
+    assert not einstellungen.transitions_for("Leo")
+
+
+def test_an_empty_profile_setting_means_everyone(uebergaenge_an, monkeypatch):
+    from app import config
+
+    monkeypatch.setenv("PTM_TRANSITION_USER", "")
+    config.get_settings.cache_clear()
+
+    assert config.get_settings().transitions_for("Leo")
+
+
+def test_disabled_transitions_win_over_the_profile(uebergaenge_an, monkeypatch):
+    from app import config
+
+    monkeypatch.setenv("PTM_TRANSITIONS_ENABLED", "false")
+    config.get_settings.cache_clear()
+
+    assert not config.get_settings().transitions_for("Alex")
+
+
+def test_other_profiles_do_not_trigger_a_build(session, gateway, uebergaenge_an):
+    """Ein Sync für ein anderes Profil rendert nichts – das spart Minuten."""
+    from app import sync_engine
+
+    db.set_period(session, "Leo", date(1985, 1, 1), date(1985, 12, 31))
+    angefragt: list[str] = []
+    sync_engine.sync_user(session, "Leo", gateway=gateway)
+
+    class Merker:
+        def request_transition_build(self, user_id):
+            angefragt.append(user_id)
+
+    # Auch mit laufendem Scheduler bleibt es bei nichts.
+    sync_engine._request_transition_build(
+        session, "Leo", _items(gateway), (date(1985, 1, 1), date(1985, 12, 31))
+    )
+    assert angefragt == []
+    assert list(uebergaenge_an.glob("*.mp4")) == []
+
+
+# ---------------------------------------------------------------------------
+# Zwei Phasen: erst rendern, später einlesen und die Playlist neu bauen
+# ---------------------------------------------------------------------------
+
+
+def _with_scheduler(body):
+    """Scheduler in einem eigenen Event-Loop starten und wieder stoppen."""
+    import asyncio
+
+    from app.scheduler import SyncScheduler
+    from app.scheduler import set_scheduler
+
+    async def runner():
+        scheduler = SyncScheduler()
+        scheduler.start()
+        set_scheduler(scheduler)
+        try:
+            return body(scheduler)
+        finally:
+            set_scheduler(None)
+            scheduler.shutdown()
+
+    return asyncio.run(runner())
+
+
+@pytest.mark.skipif(ffmpeg_pfad() is None, reason="kein FFmpeg zum Testen vorhanden")
+def test_rendering_only_queues_the_scan_and_does_not_touch_the_playlist(
+    session, gateway, uebergaenge_an, monkeypatch
+):
+    """Phase 1 rendert – die Playlist bleibt bis zum späteren Einlesen unberührt."""
+    from app.plex_client import set_gateway
+    from app.scheduler import PUBLISH_JOB_PREFIX, run_transition_build
+
+    monkeypatch.setenv("PTM_TRANSITION_SCAN_DELAY_SECONDS", "300")
+    from app import config
+
+    config.get_settings.cache_clear()
+
+    gateway.server.mit_uebergaengen(uebergaenge_an)
+    db.set_period(session, "Alex", date(1985, 1, 1), date(1985, 12, 31))
+    set_gateway(gateway)
+
+    def check(scheduler):
+        run_transition_build("Alex")
+        job = scheduler.scheduler.get_job(f"{PUBLISH_JOB_PREFIX}Alex")
+        assert job is not None
+        wartezeit = (job.next_run_time - datetime.now(timezone.utc)).total_seconds()
+        assert 240 < wartezeit <= 300      # rund fünf Minuten später
+        return job
+
+    try:
+        _with_scheduler(check)
+    finally:
+        set_gateway(None)
+
+    assert len(list(uebergaenge_an.glob("*.mp4"))) == 2   # gerendert ist gerendert
+    assert gateway.server.playlists() == []               # aber noch nichts gebaut
+
+
+@pytest.mark.skipif(ffmpeg_pfad() is None, reason="kein FFmpeg zum Testen vorhanden")
+def test_the_scan_phase_rebuilds_the_playlist_with_the_clips(
+    session, gateway, uebergaenge_an
+):
+    """Phase 2 liest Plex ein und baut die Playlist samt Übergängen neu."""
+    from app.plex_client import set_gateway
+    from app.scheduler import run_transition_publish
+
+    gateway.server.mit_uebergaengen(uebergaenge_an)
+    periode = (date(1985, 1, 1), date(1985, 12, 31))
+    db.set_period(session, "Alex", *periode)
+    transition_build.build_clips(session, "Alex", _items(gateway), periode, gateway)
+    vorher = gateway.server.transition_section.scans
+
+    set_gateway(gateway)
+    try:
+        run_transition_publish("Alex")
+    finally:
+        set_gateway(None)
+
+    assert gateway.server.transition_section.scans > vorher       # Bibliothek eingelesen
+    namen = [x.title for x in gateway.server.playlists()[0].items()]
+    assert namen[0].startswith("Time Machine - Friday 22.02.1985")
+    assert namen[3].startswith("Time Machine - Wednesday 03.07.1985")
+
+
+@pytest.mark.skipif(ffmpeg_pfad() is None, reason="kein FFmpeg zum Testen vorhanden")
+def test_invisible_clips_are_retried_before_the_playlist_is_built(
+    session, gateway, uebergaenge_an, monkeypatch
+):
+    """Sieht Plex die Clips noch nicht, wird später erneut nachgesehen."""
+    from app.plex_client import set_gateway
+    from app.scheduler import PUBLISH_JOB_PREFIX, run_transition_publish
+
+    monkeypatch.setattr(transition_build, "SCAN_TIMEOUT_SECONDS", 0)
+    gateway.server.mit_uebergaengen(uebergaenge_an)
+    periode = (date(1985, 1, 1), date(1985, 12, 31))
+    db.set_period(session, "Alex", *periode)
+    transition_build.build_clips(session, "Alex", _items(gateway), periode, gateway)
+
+    # Plex bleibt blind: der Scan macht nichts sichtbar.
+    monkeypatch.setattr(gateway.server.transition_section, "update", lambda **k: None)
+    set_gateway(gateway)
+
+    def check(scheduler):
+        run_transition_publish("Alex", attempt=1)
+        assert scheduler.scheduler.get_job(f"{PUBLISH_JOB_PREFIX}Alex") is not None
+        assert gateway.server.playlists() == []      # noch nichts gebaut
+
+        # Letzter Versuch: die Playlist entsteht auch ohne die fehlenden Clips.
+        run_transition_publish("Alex", attempt=3)
+
+    try:
+        _with_scheduler(check)
+    finally:
+        set_gateway(None)
+
+    namen = [x.title for x in gateway.server.playlists()[0].items()]
+    assert namen == ["Brazil", "Showdown", "Zurück in die Zukunft", "Pilot", "Folge 2"]

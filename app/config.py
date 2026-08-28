@@ -44,8 +44,22 @@ class Settings(BaseSettings):
     transition_library: str = "Zeitreise-Übergänge"
     transition_max_clips: int = 7
     transition_height: int = 1080
+    #: Nur für dieses Profil werden Clips gerendert – leer = für alle. Das
+    #: Rendern kostet Minuten, und gebraucht wird es praktisch nur beim
+    #: Hauptprofil.
+    transition_user: str = "Zeitreisende Ente"
+    #: Nach dem Rendern erst so lange warten, bevor Plex eingelesen und die
+    #: Playlist neu gebaut wird – Plex braucht für frische Dateien Ruhe.
+    transition_scan_delay_seconds: int = 300
     ffmpeg_binary: str = "ffmpeg"
     cover_max_bytes: int = 5 * 1024 * 1024
+
+    def transitions_for(self, user: str) -> bool:
+        """Bekommt dieses Profil Übergangsclips?"""
+        if not self.transitions_enabled:
+            return False
+        gewuenscht = self.transition_user.strip()
+        return not gewuenscht or gewuenscht.casefold() == (user or "").strip().casefold()
 
     @property
     def configured(self) -> bool:

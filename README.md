@@ -127,6 +127,8 @@ Alle Einstellungen kommen aus Umgebungsvariablen mit dem Präfix `PTM_`
 | `PTM_TRANSITION_DIR` | `./data/transitions` | Ordner für die Clips (in Plex als „Andere Videos“ einbinden) |
 | `PTM_TRANSITION_LIBRARY` | `Zeitreise-Übergänge` | Name dieser Bibliothek in Plex |
 | `PTM_TRANSITION_MAX_CLIPS` | `7` | Höchstzahl Clips je Lauf (7 = eine Woche) |
+| `PTM_TRANSITION_USER` | `Zeitreisende Ente` | Nur dieses Profil bekommt Clips (leer = alle) |
+| `PTM_TRANSITION_SCAN_DELAY_SECONDS` | `300` | Pause nach dem Rendern, bevor Plex eingelesen wird |
 | `PTM_TRANSITION_HEIGHT` | `1080` | Auflösung der Clips (`720` rendert etwa dreimal schneller) |
 | `PTM_FFMPEG_BINARY` | `ffmpeg` | Pfad zum FFmpeg-Binary (im Docker-Image enthalten) |
 
@@ -291,10 +293,21 @@ Ordner aus `PTM_TRANSITION_DIR`.
 
 **Ablauf pro Woche:** Beim ersten Sync eines neuen Zeitraums werden die alten
 Clips gelöscht und die neuen im Hintergrund gerendert (FFmpeg steckt im Image).
-Danach stößt die App einen Scan der Übergangs-Bibliothek an, wartet, bis Plex
-die Dateien kennt, und synchronisiert die Playlist noch einmal – dann stehen die
-Clips an ihrem Platz. Der laufende Sync wird davon nie blockiert: solange ein
-Clip fehlt, entsteht die Playlist einfach ohne ihn.
+Das dauert je Tag rund eine halbe Minute, für eine volle Woche also einige
+Minuten – der laufende Sync wartet nicht darauf.
+
+Sind alle Clips fertig, passiert **fünf Minuten lang nichts**
+(`PTM_TRANSITION_SCAN_DELAY_SECONDS`): Plex meldet frisch geschriebene Dateien
+sonst gern als noch unvollständig. Danach lässt die App die Übergangs-Bibliothek
+einlesen, wartet, bis alle Clips dort auftauchen, und baut die Playlist neu –
+dann stehen sie an ihrem Platz. Fehlt danach noch etwas, wird das Ganze bis zu
+zweimal wiederholt; beim letzten Versuch entsteht die Playlist auch ohne die
+fehlenden Clips. Spätestens der nächste turnusmäßige Lauf zieht sie dann nach.
+
+**Nur ein Profil:** Weil das Rendern Zeit kostet und die Clips ohnehin je Profil
+identisch wären, erzeugt die App sie nur für das Profil aus
+`PTM_TRANSITION_USER`. Alle anderen Zeitreisen laufen unverändert weiter, nur
+eben ohne Übergänge. Ein leerer Wert schaltet sie für alle Profile ein.
 
 Die Clips zählen nicht als „gesehen“ und werden deshalb auch nicht automatisch
 entfernt; sie verschwinden mit dem Wechsel auf die nächste Woche. Almanach-
@@ -418,8 +431,8 @@ app/
 7. Feste Playlist leeren und in dieser Reihenfolge neu befüllen
    (ohne Treffer wird sie entfernt – Plex kann keine leere Playlist halten)
 8. `UserState` fortschreiben und Logbuch-Eintrag anlegen
-9. Bei einem neuen Zeitraum: alte Clips verwerfen, neue im Hintergrund rendern
-   und danach ein zweites Mal synchronisieren
+9. Bei einem neuen Zeitraum: alte Clips verwerfen und neue im Hintergrund
+   rendern; fünf Minuten später Plex einlesen lassen und erneut synchronisieren
 
 Ausgelöst wird das durch den UI-Knopf, eine Blacklist-Änderung, das Polling oder
 ein Webhook-Event.

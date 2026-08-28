@@ -467,7 +467,7 @@ def _with_transitions(session, user_id: str, items, server) -> list:
     Import bewusst hier drin: transition_build baut auf diesem Modul auf, ein
     Import am Kopf wäre ein Ring.
     """
-    if not get_settings().transitions_enabled or not items:
+    if not get_settings().transitions_for(user_id) or not items:
         return [i.plex_object for i in items]
 
     from app import transition_build
@@ -487,7 +487,7 @@ def _request_transition_build(session, user_id: str, items, period) -> None:
     """Falls für diesen Zeitraum noch keine Clips existieren: im Hintergrund
     erzeugen lassen. Das Rendern dauert Minuten und darf den Lauf nicht
     aufhalten."""
-    if not get_settings().transitions_enabled or not items:
+    if not get_settings().transitions_for(user_id) or not items:
         return
 
     from app import transition_build
@@ -497,6 +497,7 @@ def _request_transition_build(session, user_id: str, items, period) -> None:
         return
     scheduler = get_scheduler()
     if scheduler is None:
+        log.warning("Kein Scheduler aktiv – Übergänge für %s bleiben aus", user_id)
         return
     scheduler.request_transition_build(user_id)
 
