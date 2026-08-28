@@ -281,9 +281,11 @@ Innerhalb eines Tages entscheidet nicht das Alphabet, sondern das Programm:
 | Film | `20:15` – fest, das ist der Hauptfilm |
 
 In der Vorschau hat jede Serienzeile eine Spalte **Sendeplatz** mit einem
-Zeitfeld. Die Änderung wird sofort gespeichert, gilt **ab da für die ganze
-Serie** – auch in allen späteren Zeitreisen – und die Vorschau sortiert sich
-direkt neu. Ein leeres Feld setzt die Serie auf den Standard zurück.
+Zeitfeld. Gespeichert wird, sobald du das Feld verlässt (oder Enter drückst) –
+erst dann sortiert sich die Vorschau neu. Beim Tippen bleibt die Zeile stehen,
+sonst rutschte sie schon zwischen Stunde und Minute weg. Die Zeit gilt **ab da
+für die ganze Serie**, auch in allen späteren Zeitreisen. Ein leeres Feld setzt
+die Serie auf den Standard zurück.
 
 Der Platz gehört zur Serie, nicht zum Profil: er gilt für alle Reisenden, so
 wie ein Sendeplatz im Fernsehen für alle Zuschauer gilt.

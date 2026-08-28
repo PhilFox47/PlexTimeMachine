@@ -54,13 +54,18 @@
           <td class="cell-date">{{ item.air_date_display }}</td>
           <td class="cell-slot">
             {% if item.slot_editable %}
+              {# Gespeichert wird erst beim Verlassen des Feldes (oder mit Enter):
+                 sonst rutscht die Zeile schon während der Eingabe weg. Die id
+                 bleibt über den Austausch hinweg gleich, damit htmx den Fokus
+                 zurückgeben kann. #}
               <input type="time" class="slot-input" value="{{ item.slot_display }}"
+                     id="slot-{{ item.rating_key }}"
                      title="Sendeplatz von »{{ item.series_title }}« – gilt ab sofort für die ganze Serie"
                      name="slot"
                      hx-post="/slot"
                      hx-target="#preview"
                      hx-swap="innerHTML"
-                     hx-trigger="change"
+                     hx-trigger="blur changed, keyup[key=='Enter'] changed"
                      hx-include="#period-form"
                      hx-vals='{{ {"rating_key": item.blacklist_key, "title": item.series_title}|tojson }}'>
             {% else %}

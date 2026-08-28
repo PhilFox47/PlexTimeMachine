@@ -138,6 +138,19 @@ def test_the_preview_offers_a_slot_for_series_only(client):
     assert 'class="slot-fixed"' in seite and ">20:15<" in seite   # Filme: fest
 
 
+def test_the_slot_is_saved_only_when_the_field_is_left(client):
+    """Beim Tippen darf sich die Zeile nicht schon wegbewegen.
+
+    Ein Zeitfeld meldet jede vollständige Eingabe als ``change`` – die Vorschau
+    hätte sich also schon zwischen Stunde und Minute neu sortiert.
+    """
+    seite = client.get("/preview?start=1985-01-01&end=1985-12-31").text
+
+    assert "blur changed" in seite
+    assert "keyup[key=='Enter'] changed" in seite      # Enter bestätigt auch
+    assert 'hx-trigger="change"' not in seite
+
+
 def test_setting_a_slot_reorders_the_preview_right_away(client, session):
     antwort = client.post(
         "/slot",
