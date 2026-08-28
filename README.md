@@ -29,8 +29,8 @@ gepflegte Playlist** aktualisieren. Keine neue Playlist pro Suche.
   weggesehen ist.
 - **Watched-Status je Betrachter** – jede Zeitreise läuft im Kontext des
   jeweiligen Home-Users (siehe [Multi-User](#multi-user-und-watched-status)).
-- **Automatisches Nachziehen** – periodisches Polling plus optionaler
-  Plex-Webhook, damit gesehene Titel zeitnah aus der Playlist fallen.
+- **Automatisches Nachziehen** – periodisches Polling plus optionaler Webhook
+  von Plex oder Tautulli, damit gesehene Titel zeitnah aus der Playlist fallen.
 - **Almanachs** – beliebig viele benannte Sammlungen aus gesuchten Serien und
   Filmen (z. B. je ein Franchise), jede mit eigener Playlist in Release-Order,
   jederzeit erweiterbar und ebenfalls automatisch nachgezogen.
@@ -150,6 +150,37 @@ Verarbeitet werden `media.scrobble`, `media.rate` und `library.new`; mehrere
 Events kurz hintereinander lösen nur einen Sync aus. Manuell gesetzte
 „gesehen“-Markierungen erzeugen laut Plex **kein** Webhook-Event – dafür ist das
 periodische Polling da.
+
+Der Fußzeile ist anzusehen, ob überhaupt etwas ankommt: dort steht, wann
+zuletzt ein Webhook eingegangen ist und woher.
+
+## Tautulli statt Plex-Webhook (für verwaltete Profile)
+
+Plex-Webhooks hängen am Konto, das sie angelegt hat, und melden Wiedergaben
+anderer Home-User in der Regel **nicht** – wer die Zeitmaschine über ein
+verwaltetes Profil nutzt, wartet also vergeblich. Tautulli sieht dagegen alle
+Nutzer und kann PTM Bescheid geben.
+
+In Tautulli: **Settings → Notification Agents → Add a new notification agent →
+Webhook**
+
+| Feld | Wert |
+|---|---|
+| Webhook URL | `http://<IP>:8088/webhook/tautulli` |
+| Webhook Method | `POST` |
+| Triggers | *Watched* (bei Bedarf zusätzlich *Playback Stop*) |
+| Conditions | z. B. `Username` **is** `Zeitreisende Ente` |
+| Data → Watched → JSON Headers | `{"Content-Type": "application/json"}` |
+| Data → Watched → JSON Data | `{"user": "{username}", "action": "watched", "title": "{title}"}` |
+
+Der Rumpf ist frei: PTM **filtert hier bewusst nicht** nach Ereignisnamen –
+welcher Auslöser eine Meldung wert ist, entscheidet der Agent in Tautulli. Jeder
+Aufruf heißt „bitte nachziehen", auch ein leerer. Die Angaben aus dem JSON
+landen im Protokoll, damit erkennbar ist, wer was gesehen hat.
+
+Mit gesetztem `PTM_WEBHOOK_TOKEN` entweder `…/webhook/tautulli?token=<geheim>`
+eintragen oder die Kopfzeile `X-PTM-Token` mitschicken – letzteres hält das
+Geheimnis aus Logzeilen heraus.
 
 ### Wenn die Seite nicht lädt
 
@@ -528,7 +559,8 @@ ein Webhook-Event.
 | `POST` | `/slot` | Sendeplatz einer Serie setzen (leer = Standard) |
 | `POST` | `/sync` | Zeitreise ausführen (Playlist schreiben) |
 | `POST` | `/user/select` | Home-User-Kontext wechseln (Cookie) |
-| `POST` | `/webhook/plex` | Plex-Webhook-Empfänger |
+| `POST` | `/webhook/plex` | Plex-Webhook-Empfänger (nur relevante Events) |
+| `POST` | `/webhook/tautulli` | Tautulli-Empfänger (jeder Aufruf löst aus) |
 | `GET` | `/thumb?path=…` | Poster-Proxy (kein Plex-Token im Browser) |
 | `GET` | `/healthz` | Status für Monitoring/Healthcheck |
 

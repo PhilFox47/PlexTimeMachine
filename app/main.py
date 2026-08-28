@@ -287,6 +287,8 @@ def dashboard_context(
         "journeys": db.list_journeys(session, user_id) if user_id else [],
         "next_poll_at": scheduler.next_poll_at if scheduler else None,
         "last_poll_at": scheduler.last_poll_at if scheduler else None,
+        "last_webhook_at": scheduler.last_webhook_at if scheduler else None,
+        "last_webhook_source": scheduler.last_webhook_source if scheduler else "",
     }
 
 
@@ -1017,36 +1019,87 @@ async def almanach_reset(
 # ---------------------------------------------------------------------------
 
 
+def _webhook_token_ok(request: Request, token: str) -> bool:
+    """Geheimnis prüfen – als Query-Parameter oder als Kopfzeile.
+
+    Tautulli kann beides; der Kopfzeilen-Weg hält das Geheimnis aus Logs und
+    Verlaufslisten heraus.
+    """
+    erwartet = get_settings().webhook_token
+    if not erwartet:
+        return True
+    return token == erwartet or request.headers.get("x-ptm-token", "") == erwartet
+
+
+async def _payload(request: Request) -> dict:
+    """Den Rumpf lesen – Plex schickt multipart, Tautulli schlichtes JSON."""
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        return json.loads(str(form.get("payload", "{}")))
+    body = await request.body()
+    return json.loads(body or b"{}")
+
+
+def _schedule_webhook_sync(source: str, beschreibung: str) -> JSONResponse:
+    scheduler = get_scheduler()
+    if scheduler is None:
+        return JSONResponse({"status": "ignored", "reason": "scheduler inaktiv"})
+    run_at = scheduler.request_webhook_sync(source)
+    log.info("Webhook von %s: %s – Sync geplant für %s",
+             source, beschreibung, run_at.strftime("%H:%M:%S"))
+    return JSONResponse({"status": "scheduled", "source": source, "run_at": run_at.isoformat()})
+
+
 @app.post("/webhook/plex")
 async def plex_webhook(request: Request, token: str = Query("")):
-    settings = get_settings()
-    if settings.webhook_token and token != settings.webhook_token:
+    if not _webhook_token_ok(request, token):
         return JSONResponse({"detail": "invalid token"}, status_code=401)
 
-    event = ""
     try:
-        content_type = request.headers.get("content-type", "")
-        if "multipart/form-data" in content_type:
-            form = await request.form()
-            payload = json.loads(str(form.get("payload", "{}")))
-        else:
-            body = await request.body()
-            payload = json.loads(body or b"{}")
+        payload = await _payload(request)
         event = payload.get("event", "")
     except (ValueError, KeyError) as exc:
         log.warning("Webhook-Payload nicht lesbar: %s", exc)
         return JSONResponse({"status": "ignored", "reason": "unparsable"})
 
+    # Plex feuert für jeden Klick; nur diese Ereignisse ändern etwas an einer
+    # Playlist.
     if event not in RELEVANT_WEBHOOK_EVENTS:
         return JSONResponse({"status": "ignored", "event": event})
 
-    scheduler = get_scheduler()
-    if scheduler is None:
-        return JSONResponse({"status": "ignored", "reason": "scheduler inaktiv"})
+    return _schedule_webhook_sync("Plex", event)
 
-    run_at = scheduler.request_webhook_sync()
-    log.info("Webhook '%s' empfangen – Sync geplant für %s", event, run_at)
-    return JSONResponse({"status": "scheduled", "event": event, "run_at": run_at.isoformat()})
+
+@app.post("/webhook/tautulli")
+async def tautulli_webhook(request: Request, token: str = Query("")):
+    """Meldung von Tautulli – nützlich für verwaltete Profile.
+
+    Plex feuert seine eigenen Webhooks nur für das Konto, dem sie gehören;
+    Wiedergaben von Home-Usern kommen dort nicht an. Tautulli sieht dagegen
+    alle Nutzer und kann uns Bescheid geben.
+
+    Hier wird bewusst **nicht** gefiltert: welcher Auslöser eine Meldung wert
+    ist, entscheidet der Notification Agent in Tautulli. Jeder Aufruf heißt
+    also „bitte nachziehen". Der Rumpf darf leer sein.
+    """
+    if not _webhook_token_ok(request, token):
+        return JSONResponse({"detail": "invalid token"}, status_code=401)
+
+    try:
+        payload = await _payload(request)
+    except (ValueError, KeyError):
+        payload = {}      # Tautulli darf auch ohne brauchbaren Rumpf melden
+
+    teile = [
+        str(payload.get(schluessel))
+        for schluessel in ("user", "username", "friendly_name", "action", "event")
+        if payload.get(schluessel)
+    ]
+    titel = payload.get("title") or payload.get("full_title")
+    if titel:
+        teile.append(str(titel))
+    return _schedule_webhook_sync("Tautulli", " · ".join(teile) or "ohne Angaben")
 
 
 #: Nur Bildpfade der Plex-Bibliothek dürfen über den Proxy geladen werden.

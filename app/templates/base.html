@@ -64,6 +64,15 @@
     {% else %}
       <span>Polling deaktiviert</span>
     {% endif %}
+    {# Beim Einrichten von Plex- oder Tautulli-Webhooks das Wichtigste: kommt
+       überhaupt etwas an? #}
+    <span>
+      {%- if last_webhook_at %}
+        Webhook: {{ last_webhook_source }} · {{ last_webhook_at.strftime('%H:%M') }} UTC
+      {%- else %}
+        Webhook: noch keiner eingegangen
+      {%- endif %}
+    </span>
   </footer>
 
 </div>

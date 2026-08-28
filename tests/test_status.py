@@ -184,3 +184,69 @@ def test_the_log_buffer_does_not_grow_without_bound():
         log.info("Zeile %s", i)
 
     assert len(logbuffer.lines(limit=10_000)) == logbuffer.CAPACITY
+
+
+# ---------------------------------------------------------------------------
+# Webhooks: Plex und Tautulli
+# ---------------------------------------------------------------------------
+
+
+def test_tautulli_may_report_in_its_own_words(client, session):
+    """Was eine Meldung wert ist, entscheidet der Agent in Tautulli.
+
+    Deshalb wird hier nicht nach Ereignisnamen gefiltert – anders als beim
+    Plex-Webhook, der für jeden Klick feuert.
+    """
+    db.set_period(session, "Alex", ERA_START, ERA_END)
+
+    antwort = client.post(
+        "/webhook/tautulli",
+        json={"user": "Zeitreisende Ente", "action": "watched", "title": "Pilot"},
+    )
+
+    assert antwort.status_code == 200
+    assert antwort.json()["status"] == "scheduled"
+
+
+def test_tautulli_is_accepted_without_a_body(client):
+    """Ein Agent ohne JSON-Rumpf soll trotzdem etwas auslösen."""
+    antwort = client.post("/webhook/tautulli", content=b"")
+
+    assert antwort.json()["status"] == "scheduled"
+
+    kaputt = client.post("/webhook/tautulli", content=b"kein json")
+    assert kaputt.json()["status"] == "scheduled"
+
+
+def test_the_plex_webhook_still_ignores_irrelevant_events(client):
+    """Der Plex-Weg bleibt streng – media.play soll nichts auslösen."""
+    antwort = client.post("/webhook/plex", json={"event": "media.play"})
+
+    assert antwort.json()["status"] == "ignored"
+
+
+def test_both_webhooks_check_the_token(client, monkeypatch):
+    from app import config
+
+    monkeypatch.setenv("PTM_WEBHOOK_TOKEN", "geheim")
+    config.get_settings.cache_clear()
+
+    assert client.post("/webhook/tautulli", json={}).status_code == 401
+    assert client.post("/webhook/plex", json={"event": "media.scrobble"}).status_code == 401
+
+    assert client.post("/webhook/tautulli?token=geheim", json={}).status_code == 200
+    # Kopfzeile geht auch – so steht das Geheimnis in keiner URL.
+    mit_kopf = client.post("/webhook/tautulli", json={}, headers={"X-PTM-Token": "geheim"})
+    assert mit_kopf.status_code == 200
+
+    config.get_settings.cache_clear()
+
+
+def test_the_footer_says_whether_a_webhook_ever_arrived(client):
+    """Beim Einrichten die wichtigste Frage – ohne im Log zu suchen."""
+    assert "noch keiner eingegangen" in client.get("/").text
+
+    client.post("/webhook/tautulli", json={"user": "Zeitreisende Ente"})
+
+    seite = client.get("/").text
+    assert "Webhook: Tautulli" in seite

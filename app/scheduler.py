@@ -204,6 +204,10 @@ class SyncScheduler:
         self.settings = settings or get_settings()
         self.scheduler = AsyncIOScheduler(timezone="UTC")
         self.last_poll_at: Optional[datetime] = None
+        #: Wann zuletzt ein Webhook kam und woher – die Oberfläche zeigt es an,
+        #: damit man beim Einrichten nicht raten muss, ob er ankommt.
+        self.last_webhook_at: Optional[datetime] = None
+        self.last_webhook_source: str = ""
 
     # -- Lifecycle ---------------------------------------------------------
 
@@ -295,8 +299,10 @@ class SyncScheduler:
     async def _publish_transitions(self, user_id: str, attempt: int) -> None:
         await asyncio.to_thread(run_transition_publish, user_id, attempt)
 
-    def request_webhook_sync(self) -> datetime:
+    def request_webhook_sync(self, source: str = "Plex") -> datetime:
         """Sync nach Webhook-Event anstossen – mehrere Events werden entprellt."""
+        self.last_webhook_at = datetime.now(timezone.utc)
+        self.last_webhook_source = source
         delay = max(self.settings.webhook_debounce_seconds, 1)
         run_at = datetime.now(self.scheduler.timezone) + timedelta(seconds=delay)
         self.scheduler.add_job(
