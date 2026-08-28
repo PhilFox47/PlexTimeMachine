@@ -488,6 +488,32 @@ def _with_scheduler(body):
     return asyncio.run(runner())
 
 
+def test_a_failed_render_is_reported_and_not_swallowed(session, gateway, uebergaenge_an,
+                                                       monkeypatch):
+    """Scheitert das Rendern, muss der Grund stehen bleiben.
+
+    Vorher überschrieb das anschließende „nichts zu erzeugen" die Fehlermeldung
+    – in der Oberfläche stand dann fälschlich alles sei in Ordnung.
+    """
+    from app.plex_client import set_gateway
+    from app.scheduler import run_transition_build
+
+    def kaputt(*a, **kw):
+        raise transitions.RenderError("FFmpeg nicht gefunden ('ffmpeg')")
+
+    monkeypatch.setattr(transitions, "render_clip", kaputt)
+    db.set_period(session, "Alex", date(1985, 1, 1), date(1985, 12, 31))
+    set_gateway(gateway)
+    try:
+        run_transition_build("Alex")
+    finally:
+        set_gateway(None)
+
+    stand = db.get_or_create_user_state(session, "Alex")
+    assert stand.transition_phase == "error"
+    assert "FFmpeg" in stand.transition_message
+
+
 @pytest.mark.skipif(ffmpeg_pfad() is None, reason="kein FFmpeg zum Testen vorhanden")
 def test_rendering_only_queues_the_scan_and_does_not_touch_the_playlist(
     session, gateway, uebergaenge_an, monkeypatch

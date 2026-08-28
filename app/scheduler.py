@@ -82,15 +82,27 @@ def run_transition_build(user_id: str) -> None:
             server = gateway.connect_as(user_id)
             roh = collect_items(gateway, server, *periode, db.all_slots(session))
             items, _ = apply_blacklist(roh, db.blacklist_keys(session, user_id))
-            session.commit()
-            log.info("Übergänge für %s werden gerendert …", user_id)
+            tage = len(transition_build.group_by_day(items))
+            geplant = min(tage, max(1, get_settings().transition_max_clips))
+            db.set_transition_state(session, user_id, "rendering",
+                                    f"{geplant} Clips werden erzeugt", 0, geplant)
+            log.info("Übergänge für %s werden gerendert (%s Clips) …", user_id, geplant)
             titel = transition_build.build_clips(session, user_id, items, periode, gateway)
         except Exception as exc:
             log.exception("Übergänge für %s fehlgeschlagen: %s", user_id, exc)
+            db.set_transition_state(session, user_id, "error", str(exc)[:300])
+            return
+
+        if not titel:
+            # Ein abgebrochener Rendervorgang hat den Grund schon hinterlegt –
+            # der darf nicht mit "nichts zu tun" überschrieben werden.
+            stand = db.get_or_create_user_state(session, user_id)
+            if stand.transition_phase != "error":
+                db.set_transition_state(session, user_id, "ok", "Nichts zu erzeugen")
+            log.info("Für %s gab es nichts zu rendern", user_id)
             return
 
     if not titel:
-        log.info("Für %s gab es nichts zu rendern", user_id)
         return
 
     verzoegerung = get_settings().transition_scan_delay_seconds
@@ -100,6 +112,12 @@ def run_transition_build(user_id: str) -> None:
         user_id,
         verzoegerung,
     )
+    with Session(db.get_engine(), expire_on_commit=False) as session:
+        db.set_transition_state(
+            session, user_id, "waiting",
+            f"warte {verzoegerung} s, dann liest Plex den Ordner ein",
+            len(titel), len(titel),
+        )
     scheduler = get_scheduler()
     if scheduler is None:  # ohne laufenden Scheduler (z. B. im Test) direkt weiter
         run_transition_publish(user_id)
@@ -132,6 +150,8 @@ def run_transition_publish(user_id: str, attempt: int = 1) -> None:
             gefunden = transition_build.find_clips(server, titel, warten=True)
         except Exception as exc:
             log.warning("Übergänge für %s nicht auffindbar: %s", user_id, exc)
+            db.set_transition_state(session, user_id, "error", str(exc)[:300],
+                                    0, len(titel))
             gefunden = {}
 
         fehlend = [name for name in titel if name not in gefunden]
@@ -146,6 +166,12 @@ def run_transition_publish(user_id: str, attempt: int = 1) -> None:
                     attempt + 1,
                     verzoegerung,
                 )
+                db.set_transition_state(
+                    session, user_id, "waiting",
+                    f"{len(fehlend)} Clips noch nicht in Plex sichtbar – "
+                    f"Versuch {attempt + 1} von {MAX_PUBLISH_ATTEMPTS}",
+                    len(gefunden), len(titel),
+                )
                 scheduler.request_transition_publish(
                     user_id, attempt=attempt + 1, delay=verzoegerung
                 )
@@ -157,6 +183,17 @@ def run_transition_publish(user_id: str, attempt: int = 1) -> None:
             len(gefunden),
             len(titel),
         )
+        if fehlend:
+            db.set_transition_state(
+                session, user_id, "error",
+                f"{len(fehlend)} von {len(titel)} Clips bleiben in Plex unsichtbar – "
+                f"stimmt die Bibliothek »{get_settings().transition_library}«?",
+                len(gefunden), len(titel),
+            )
+        else:
+            db.set_transition_state(session, user_id, "ok",
+                                    f"{len(titel)} Clips in der Playlist",
+                                    len(titel), len(titel))
         sync_user(session, user_id, trigger="transitions")
 
 

@@ -28,7 +28,7 @@ from fastapi.templating import Jinja2Templates
 from sqlmodel import Session
 from starlette.concurrency import run_in_threadpool
 
-from app import __version__, covers, db, slots
+from app import __version__, covers, db, logbuffer, slots, transition_build
 from app import almanach as almanach_lib
 from app.config import get_settings
 from app.formatting import format_date, format_datetime, format_period, week_of, weekday_short
@@ -85,6 +85,10 @@ def _check_data_dir() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    logbuffer.install()
+    # APScheduler erzählt auf INFO jeden Job-Lauf – im Protokoll der Oberfläche
+    # verdeckt das die eigenen Meldungen.
+    logging.getLogger("apscheduler").setLevel(logging.WARNING)
     _check_data_dir()
     db.init_db()
     scheduler = SyncScheduler()
@@ -434,6 +438,88 @@ async def set_slot(
         return HTMLResponse("")
     preview = await compute_preview(session, user_id, start_date, end_date)
     return preview_response(request, preview)
+
+
+# ---------------------------------------------------------------------------
+# Übergänge: Status, Anstoßen, Protokoll
+# ---------------------------------------------------------------------------
+
+
+def _transition_status(session: Session, user_id: str, with_plex: bool):
+    """Statusauskunft holen – die Plex-Prüfung darf dabei fehlschlagen."""
+    server = None
+    if with_plex and user_id:
+        try:
+            server = get_gateway().connect_as(user_id)
+        except Exception as exc:  # pragma: no cover - Plex kann weg sein
+            log.debug("Statusprüfung ohne Plex: %s", exc)
+    return transition_build.status(session, user_id, server)
+
+
+def _transition_response(request: Request, status, user_id: str) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "partials/transitions.html",
+        {
+            "transitions": status,
+            "current_user": user_id,
+            "settings": get_settings(),
+            "logs": logbuffer.lines(limit=12, only=("transition", "scheduler")),
+        },
+    )
+
+
+@app.get("/transitions/status", response_class=HTMLResponse)
+async def transition_status(
+    request: Request,
+    plex: int = Query(1),
+    session: Session = Depends(db.get_session),
+):
+    users, _ = await run_in_threadpool(load_users)
+    user_id = resolve_user(request, users)
+    status = await run_in_threadpool(_transition_status, session, user_id, bool(plex))
+    return _transition_response(request, status, user_id)
+
+
+@app.post("/transitions/build", response_class=HTMLResponse)
+async def transition_build_now(
+    request: Request, session: Session = Depends(db.get_session)
+):
+    """Clips von Hand anstoßen – ohne auf die nächste Zeitreise zu warten."""
+    users, _ = await run_in_threadpool(load_users)
+    user_id = resolve_user(request, users)
+    scheduler = get_scheduler()
+
+    if not user_id:
+        pass
+    elif not get_settings().transitions_for(user_id):
+        db.set_transition_state(session, user_id, "error",
+                                "Für dieses Profil sind Übergänge ausgeschaltet.")
+    elif scheduler is None:
+        db.set_transition_state(session, user_id, "error", "Kein Scheduler aktiv.")
+    else:
+        transition_build.discard_clips(session, user_id)
+        db.set_transition_state(session, user_id, "queued", "von Hand angestoßen")
+        scheduler.request_transition_build(user_id)
+
+    status = await run_in_threadpool(_transition_status, session, user_id, False)
+    return _transition_response(request, status, user_id)
+
+
+@app.get("/logs", response_class=HTMLResponse)
+async def logs_page(request: Request, session: Session = Depends(db.get_session)):
+    kontext = await page_context(request, session)
+    kontext["logs"] = list(reversed(logbuffer.lines(limit=200)))
+    return templates.TemplateResponse(request, "logs.html", kontext)
+
+
+@app.get("/logs/lines", response_class=HTMLResponse)
+async def logs_fragment(request: Request, limit: int = Query(200)):
+    return templates.TemplateResponse(
+        request,
+        "partials/logs.html",
+        {"logs": list(reversed(logbuffer.lines(limit=min(limit, 400))))},
+    )
 
 
 @app.post("/blacklist/remove")

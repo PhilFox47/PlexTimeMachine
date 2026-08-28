@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% set page = 'logs' %}
+{% block content %}
+
+<section class="panel">
+  <h2>Protokoll</h2>
+  <p class="cell-sub">
+    Die jüngsten Meldungen der laufenden Instanz – dieselben Zeilen, die auch im
+    Container-Log stehen. Nach einem Neustart fängt die Liste von vorn an.
+  </p>
+
+  <div id="log-lines"
+       hx-get="/logs/lines"
+       hx-trigger="every 10s"
+       hx-swap="innerHTML">
+    {% include "partials/logs.html" %}
+  </div>
+</section>
+
+{% endblock %}

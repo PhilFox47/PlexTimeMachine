@@ -14,7 +14,8 @@ from __future__ import annotations
 import logging
 import re
 import time
-from datetime import date
+from dataclasses import dataclass, field
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Iterable, Optional, Sequence
 
@@ -39,6 +40,127 @@ def transition_dir() -> Path:
     pfad = Path(get_settings().transition_dir)
     pfad.mkdir(parents=True, exist_ok=True)
     return pfad
+
+
+# ---------------------------------------------------------------------------
+# Selbstauskunft für die Oberfläche
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Check:
+    """Eine Zeile im Statusfeld: geprüft, mit Urteil."""
+
+    name: str
+    ok: bool
+    detail: str = ""
+
+
+@dataclass
+class TransitionStatus:
+    """Was die Oberfläche über die Übergänge dieses Nutzers wissen will."""
+
+    aktiv: bool                      # für dieses Profil eingeschaltet?
+    phase: str = ""
+    message: str = ""
+    done: int = 0
+    total: int = 0
+    updated_at: Optional[datetime] = None
+    checks: list[Check] = field(default_factory=list)
+    clips: int = 0
+    dateien: int = 0
+    plex_geprueft: bool = False      # war Plex bei dieser Auskunft dabei?
+    in_plex: Optional[int] = None    # None = nicht nachgesehen
+
+    @property
+    def laeuft(self) -> bool:
+        return self.phase in {"queued", "rendering", "waiting"}
+
+    @property
+    def hat_fehler(self) -> bool:
+        return self.phase == "error" or any(not c.ok for c in self.checks)
+
+    @property
+    def bereit(self) -> bool:
+        return self.aktiv and all(c.ok for c in self.checks)
+
+
+def status(
+    session: Session,
+    user_id: str,
+    server: Any = None,
+) -> TransitionStatus:
+    """Alles nachsehen, was zwischen „eingeschaltet" und „Clip in Plex" liegt.
+
+    ``server`` ist freiwillig: ohne ihn bleibt die Bibliotheksprüfung aus, dafür
+    braucht die Auskunft keinen Netzzugriff.
+    """
+    einstellungen = get_settings()
+    state = db.get_or_create_user_state(session, user_id) if user_id else None
+    eintraege = db.list_transition_clips(session, user_id) if user_id else []
+
+    ergebnis = TransitionStatus(
+        aktiv=einstellungen.transitions_for(user_id),
+        phase=state.transition_phase if state else "",
+        message=state.transition_message if state else "",
+        done=state.transition_done if state else 0,
+        total=state.transition_total if state else 0,
+        updated_at=state.transition_updated_at if state else None,
+        clips=len(eintraege),
+    )
+
+    if not einstellungen.transitions_enabled:
+        ergebnis.checks.append(
+            Check("Übergänge", False, "ausgeschaltet – PTM_TRANSITIONS_ENABLED=true setzen")
+        )
+        return ergebnis
+
+    gewuenscht = einstellungen.transition_user.strip()
+    if not ergebnis.aktiv:
+        ergebnis.checks.append(
+            Check("Profil", False,
+                  f"Clips gibt es nur für »{gewuenscht}« – dieses Profil heißt »{user_id}«")
+        )
+        return ergebnis
+    ergebnis.checks.append(
+        Check("Profil", True, f"»{user_id}«" + ("" if gewuenscht else " (alle Profile)"))
+    )
+
+    ergebnis.checks.append(
+        Check("FFmpeg", transitions.ffmpeg_available(einstellungen.ffmpeg_binary),
+              einstellungen.ffmpeg_binary)
+    )
+
+    ordner = Path(einstellungen.transition_dir)
+    try:
+        ordner.mkdir(parents=True, exist_ok=True)
+        probe = ordner / ".schreibtest"
+        probe.write_text("x", encoding="utf-8")
+        probe.unlink()
+        ergebnis.checks.append(Check("Ordner", True, str(ordner)))
+    except OSError as exc:
+        ergebnis.checks.append(Check("Ordner", False, f"{ordner}: {exc}"))
+
+    if ordner.exists():
+        ergebnis.dateien = len(list(ordner.glob("*.mp4")))
+
+    if server is not None:
+        ergebnis.plex_geprueft = True
+        try:
+            abschnitt = _library(server)
+            ergebnis.checks.append(
+                Check("Plex-Bibliothek", True, f"»{abschnitt.title}«")
+            )
+            titel = {c.title for c in eintraege}
+            if titel:
+                gefunden = find_clips(server, titel)
+                ergebnis.in_plex = len(gefunden)
+        except PlexUnavailable as exc:
+            ergebnis.checks.append(Check("Plex-Bibliothek", False, str(exc)))
+        except Exception as exc:  # pragma: no cover - Plex kann zicken
+            ergebnis.checks.append(Check("Plex-Bibliothek", False, str(exc)))
+
+    return ergebnis
 
 
 # ---------------------------------------------------------------------------
@@ -197,12 +319,19 @@ def build_clips(
             )
         except transitions.RenderError as exc:
             log.error("Übergang für %s (%s) nicht erzeugt: %s", user_id, tag, exc)
+            db.set_transition_state(session, user_id, "error", str(exc)[:300],
+                                    len(titel), len(tage))
             break
         db.add_transition_clip(
             session, user_id, tag, period, name, clip_title(user_id, tag), len(tages_items)
         )
         titel.append(clip_title(user_id, tag))
         log.info("Übergang erzeugt: %s (%s Titel)", name, len(tages_items))
+        db.set_transition_state(
+            session, user_id, "rendering",
+            f"{weekday_long(tag)} {tag.strftime('%d.%m.%Y')} fertig",
+            len(titel), len(tage),
+        )
         vortag = tag
 
     return titel

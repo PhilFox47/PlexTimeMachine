@@ -1,0 +1,90 @@
+{# Statusfeld der Übergänge – lädt sich selbst nach, solange etwas läuft. #}
+{# Während des Rendern wird ohne Plex nachgefragt (sonst klopft die Seite alle
+   vier Sekunden am Server an); ist es vorbei, holt ein einmaliger Nachschlag
+   die Bibliotheksprüfung nach. #}
+<div id="transitions"
+     hx-target="#transitions"
+     hx-swap="outerHTML"
+     {% if transitions.laeuft %}
+     hx-get="/transitions/status?plex=0"
+     hx-trigger="every 4s"
+     {% elif not transitions.plex_geprueft %}
+     hx-get="/transitions/status"
+     hx-trigger="load delay:400ms"
+     {% endif %}>
+
+  {% if not settings.transitions_enabled %}
+    <div class="notice muted">
+      Übergänge sind ausgeschaltet. Zum Einschalten <code>PTM_TRANSITIONS_ENABLED=true</code>
+      setzen – vorher die Plex-Bibliothek »{{ settings.transition_library }}« anlegen.
+    </div>
+  {% else %}
+
+    <div class="trans-head">
+      {% if transitions.laeuft %}
+        <span class="lamp working"></span>
+        <span class="trans-state">
+          {% if transitions.phase == 'queued' %}eingereiht
+          {% elif transitions.phase == 'rendering' %}wird gerendert
+          {% else %}warte auf Plex{% endif %}
+        </span>
+      {% elif transitions.phase == 'error' or transitions.hat_fehler %}
+        <span class="lamp bad"></span><span class="trans-state">Problem</span>
+      {% elif transitions.phase == 'ok' %}
+        <span class="lamp good"></span><span class="trans-state">fertig</span>
+      {% else %}
+        <span class="lamp idle"></span><span class="trans-state">bereit</span>
+      {% endif %}
+
+      {% if transitions.message %}
+        <span class="cell-sub">{{ transitions.message }}</span>
+      {% endif %}
+      {% if transitions.updated_at %}
+        <span class="cell-sub">· {{ transitions.updated_at|de_datetime }} UTC</span>
+      {% endif %}
+    </div>
+
+    {% if transitions.total %}
+      <div class="trans-bar" title="{{ transitions.done }} von {{ transitions.total }}">
+        <div class="trans-bar-fill"
+             style="width: {{ (100 * transitions.done / transitions.total)|round|int }}%"></div>
+      </div>
+    {% endif %}
+
+    <ul class="checks">
+      {% for check in transitions.checks %}
+        <li class="{{ 'ok' if check.ok else 'bad' }}">
+          <span class="check-mark">{{ '✓' if check.ok else '✕' }}</span>
+          <span class="check-name">{{ check.name }}</span>
+          <span class="cell-sub">{{ check.detail }}</span>
+        </li>
+      {% endfor %}
+      <li class="{{ 'ok' if transitions.clips else 'idle' }}">
+        <span class="check-mark">{{ '✓' if transitions.clips else '·' }}</span>
+        <span class="check-name">Clips</span>
+        <span class="cell-sub">
+          {{ transitions.clips }} für den aktuellen Zeitraum ·
+          {{ transitions.dateien }} Datei(en) im Ordner
+          {% if transitions.in_plex is not none %}· {{ transitions.in_plex }} in Plex sichtbar{% endif %}
+        </span>
+      </li>
+    </ul>
+
+    <form hx-post="/transitions/build" hx-target="#transitions" hx-swap="outerHTML"
+          hx-disabled-elt="find button">
+      <button class="btn" type="submit" {% if transitions.laeuft or not transitions.aktiv %}disabled{% endif %}>
+        Übergänge jetzt erzeugen
+      </button>
+      <span class="cell-sub">
+        Verwirft die vorhandenen Clips und rendert sie neu – dauert je Tag etwa eine halbe Minute.
+      </span>
+    </form>
+
+    {% if logs %}
+      <details class="log-box" {% if transitions.hat_fehler %}open{% endif %}>
+        <summary>Letzte Meldungen</summary>
+        {% include "partials/logs.html" %}
+      </details>
+    {% endif %}
+  {% endif %}
+</div>

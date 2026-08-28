@@ -517,6 +517,7 @@ def _request_transition_build(session, user_id: str, items, period) -> None:
     if scheduler is None:
         log.warning("Kein Scheduler aktiv – Übergänge für %s bleiben aus", user_id)
         return
+    db.set_transition_state(session, user_id, "queued", "eingereiht")
     scheduler.request_transition_build(user_id)
 
 

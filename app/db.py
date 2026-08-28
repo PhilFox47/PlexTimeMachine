@@ -39,6 +39,17 @@ class UserState(SQLModel, table=True):
     last_item_count: int = 0
     cover_path: Optional[str] = None
     cover_applied_at: Optional[datetime] = None
+    # Wie es den Übergangsclips dieses Nutzers gerade geht – für die Anzeige
+    # in der Oberfläche, damit man das Rendern nicht im Container-Log suchen muss.
+    transition_phase: str = ""       # "" | queued | rendering | waiting | ok | error
+    transition_message: str = ""
+    transition_done: int = 0
+    transition_total: int = 0
+    transition_updated_at: Optional[datetime] = None
+
+    @property
+    def transition_running(self) -> bool:
+        return self.transition_phase in {"queued", "rendering", "waiting"}
 
     @property
     def has_period(self) -> bool:
@@ -724,6 +735,26 @@ def drop_transition_clips(session: Session, user_id: str) -> list[str]:
         session.delete(clip)
     session.commit()
     return namen
+
+
+def set_transition_state(
+    session: Session,
+    user_id: str,
+    phase: str,
+    message: str = "",
+    done: int = 0,
+    total: int = 0,
+) -> UserState:
+    """Stand der Clip-Erzeugung festhalten – die Oberfläche liest ihn aus."""
+    state = get_or_create_user_state(session, user_id)
+    state.transition_phase = phase
+    state.transition_message = message
+    state.transition_done = done
+    state.transition_total = total
+    state.transition_updated_at = utcnow()
+    session.add(state)
+    session.commit()
+    return state
 
 
 # ---------------------------------------------------------------------------

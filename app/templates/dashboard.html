@@ -84,6 +84,16 @@
   </div>
 </section>
 
+{% if settings.transitions_enabled %}
+<section class="panel">
+  <h2>Übergänge</h2>
+
+  <div id="transitions" hx-get="/transitions/status" hx-trigger="load" hx-swap="outerHTML">
+    <div class="empty">Status wird geprüft …</div>
+  </div>
+</section>
+{% endif %}
+
 <section class="panel">
   <h2>Cover der Playlist</h2>
 

@@ -1,0 +1,15 @@
+{# Logzeilen, neueste zuerst #}
+{% if not logs %}
+  <div class="empty">Noch nichts protokolliert.</div>
+{% else %}
+<div class="log-lines">
+  {% for line in logs %}
+    <div class="log-line {{ line.level|lower }}">
+      <span class="log-time">{{ line.at|de_datetime }}</span>
+      <span class="log-level">{{ line.level[:4] }}</span>
+      <span class="log-src">{{ line.short_logger }}</span>
+      <span class="log-msg">{{ line.message }}</span>
+    </div>
+  {% endfor %}
+</div>
+{% endif %}

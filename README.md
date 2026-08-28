@@ -47,6 +47,8 @@ gepflegte Playlist** aktualisieren. Keine neue Playlist pro Suche.
   Home-User freigeben: ein Inhalt für alle, aber je Profil eine eigene Playlist
   mit dem eigenen Watch-Status.
 - **Logbuch** – jeder Lauf mit Art, Zeitraum, Auslöser und Trefferzahl.
+- **Statusfeld und Protokoll** – im Cockpit steht, ob gerade Clips entstehen und
+  woran es hakt; unter *Protokoll* stehen die jüngsten Meldungen der Instanz.
 
 ## Multi-User und Watched-Status
 
@@ -341,6 +343,15 @@ Ordner aus `PTM_TRANSITION_DIR`.
 3. Erst danach `PTM_TRANSITIONS_ENABLED=true` setzen und den Container neu
    starten.
 
+**Sehen, was passiert:** Im Cockpit steht der Abschnitt **Übergänge**. Er prüft
+der Reihe nach Profil, FFmpeg, Ordner und Plex-Bibliothek, zeigt, wie viele
+Clips es für den aktuellen Zeitraum gibt (in der Datenbank, im Ordner und in
+Plex sichtbar), und während des Rendern eine Fortschrittsanzeige, die sich alle
+vier Sekunden selbst nachlädt. Der Knopf **Übergänge jetzt erzeugen** verwirft
+die vorhandenen Clips und baut sie neu – praktisch zum Ausprobieren, ohne auf
+die nächste Zeitreise zu warten. Geht etwas schief, steht der Grund direkt
+darunter, dazu die letzten Meldungen aus dem Protokoll.
+
 **Ablauf pro Woche:** Beim ersten Sync eines neuen Zeitraums werden die alten
 Clips gelöscht und die neuen im Hintergrund gerendert (FFmpeg steckt im Image).
 Das dauert je Tag rund eine halbe Minute, für eine volle Woche also einige
@@ -462,6 +473,7 @@ app/
 ├── plex_client.py   plexapi-Wrapper inkl. Home-User-Impersonation
 ├── sync_engine.py   Suche, Blacklist-Filter, Merge/Sort, Playlist-Pflege
 ├── slots.py         Sendeplätze: Zeiten lesen, Tagesreihenfolge bestimmen
+├── logbuffer.py     Ringpuffer der jüngsten Logzeilen für die Oberfläche
 ├── transitions.py   Rendert die Übergangsclips (Pillow + FFmpeg)
 ├── assets/          Der Chime unter der Datumsrolle
 ├── transition_build.py  Clips planen, bauen, Plex scannen, einweben
@@ -507,6 +519,9 @@ ein Webhook-Event.
 | `POST` | `/cover/timemachine`, `/cover/timemachine/delete` | Cover der Zeitreise-Playlist |
 | `GET`/`POST` | `/almanach/{id}/reset` | Watch-Status zurücksetzen (Rückfrage / Ausführung) |
 | `GET` | `/blacklist`, `/logbook` | Blacklist-Verwaltung, Reise-Logbuch |
+| `GET` | `/logs`, `/logs/lines` | Protokoll der laufenden Instanz (Seite / Fragment) |
+| `GET` | `/transitions/status` | Statusfeld der Übergänge (`?plex=0` ohne Plex-Prüfung) |
+| `POST` | `/transitions/build` | Übergänge von Hand neu erzeugen |
 | `POST` | `/period` | Zeitraum speichern, Vorschau-Fragment zurückgeben |
 | `GET` | `/preview` | Vorschau-Fragment ohne Speichern |
 | `POST` | `/blacklist/add`, `/blacklist/remove` | Blacklist pflegen |
@@ -530,7 +545,7 @@ Playlist selbst entfernt), Wochenrechnung und Wochentagsanzeige, den Almanach
 (Titelsuche, Serien-Auflösung, Release-Order, fehlende Einträge), die Freigabe an andere
 Profile inklusive getrennter Watch-Stände, Cover-Prüfung und -Übertragung,
 die Sendeplätze (Zeiten lesen, Tagesreihenfolge, stabiler Zufall, Speicherung
-und Bedienung),
+und Bedienung), Statusfeld und Protokoll,
 die Übergangsclips (Zeilenlayout, Scrollen langer Tage, Laufzeit, Tonspur,
 Tagesgruppierung, Staffelposter und echte FFmpeg-Rendervorgänge in 360p) sowie Scheduler-Entprellung und alle
 HTTP-Endpunkte gegen ein Plex-Double ab – ein echter Plex-Server wird dafür
