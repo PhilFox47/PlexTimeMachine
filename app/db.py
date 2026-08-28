@@ -117,6 +117,26 @@ class AlmanachEntry(SQLModel, table=True):
         return MediaType(self.media_type) is MediaType.show
 
 
+class TransitionClip(SQLModel, table=True):
+    """Ein erzeugter Übergangsclip – gehört zu einem Nutzer und einem Zeitraum.
+
+    Die Clips werden pro Zeitraum erzeugt: wechselt der Nutzer die Woche,
+    fliegen die alten heraus und es entstehen neue.
+    """
+
+    __tablename__ = "transition_clip"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    plex_user_id: str = Field(index=True)
+    day: date
+    period_start: Optional[date] = None
+    period_end: Optional[date] = None
+    file_name: str = ""
+    title: str = ""          # so heißt der Clip später in Plex
+    item_count: int = 0
+    created_at: datetime = Field(default_factory=utcnow)
+
+
 class JourneyLog(SQLModel, table=True):
     """Logbuch: eine Zeile pro ausgeführter Zeitreise."""
 
@@ -644,6 +664,49 @@ def remove_from_almanach(session: Session, almanach: Almanach, rating_key: str) 
     session.delete(entry)
     session.commit()
     return True
+
+
+def list_transition_clips(session: Session, user_id: str) -> Sequence[TransitionClip]:
+    stmt = (
+        select(TransitionClip)
+        .where(TransitionClip.plex_user_id == user_id)
+        .order_by(TransitionClip.day)
+    )
+    return session.exec(stmt).all()
+
+
+def add_transition_clip(
+    session: Session,
+    user_id: str,
+    day: date,
+    period: tuple[Optional[date], Optional[date]],
+    file_name: str,
+    title: str,
+    item_count: int,
+) -> TransitionClip:
+    clip = TransitionClip(
+        plex_user_id=user_id,
+        day=day,
+        period_start=period[0],
+        period_end=period[1],
+        file_name=file_name,
+        title=title,
+        item_count=item_count,
+    )
+    session.add(clip)
+    session.commit()
+    session.refresh(clip)
+    return clip
+
+
+def drop_transition_clips(session: Session, user_id: str) -> list[str]:
+    """Alle Clips eines Nutzers vergessen; gibt die Dateinamen zurück."""
+    namen = []
+    for clip in list_transition_clips(session, user_id):
+        namen.append(clip.file_name)
+        session.delete(clip)
+    session.commit()
+    return namen
 
 
 def log_journey(

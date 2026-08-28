@@ -37,6 +37,14 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./data/plex_time_machine.db"
     preview_limit: int = 400
     cover_dir: str = "./data/covers"
+
+    # --- Übergangsclips ---------------------------------------------------
+    transitions_enabled: bool = False
+    transition_dir: str = "./data/transitions"
+    transition_library: str = "Zeitreise-Übergänge"
+    transition_max_clips: int = 7
+    transition_height: int = 1080
+    ffmpeg_binary: str = "ffmpeg"
     cover_max_bytes: int = 5 * 1024 * 1024
 
     @property

@@ -43,6 +43,7 @@ class PreviewItem:
     air_date: Optional[date] = None
     year: Optional[int] = None
     thumb: str = ""
+    parent_thumb: str = ""   # bei Episoden das Staffelposter
     duration_minutes: Optional[int] = None
     plex_object: Any = field(default=None, repr=False, compare=False)
 
@@ -158,6 +159,7 @@ def to_preview_item(obj: Any) -> Optional[PreviewItem]:
             air_date=air_date,
             year=_as_int(getattr(obj, "year", None)),
             thumb=getattr(obj, "grandparentThumb", None) or getattr(obj, "thumb", "") or "",
+            parent_thumb=getattr(obj, "parentThumb", None) or "",
             duration_minutes=duration // 60000 if duration else None,
             plex_object=obj,
         )
@@ -459,6 +461,46 @@ def clear_cover(gateway: PlexGateway, user_id: str, playlist_name: str) -> bool:
     return True
 
 
+def _with_transitions(session, user_id: str, items, server) -> list:
+    """Übergangsclips vor die jeweiligen Tage setzen, sofern vorhanden.
+
+    Import bewusst hier drin: transition_build baut auf diesem Modul auf, ein
+    Import am Kopf wäre ein Ring.
+    """
+    if not get_settings().transitions_enabled or not items:
+        return [i.plex_object for i in items]
+
+    from app import transition_build
+
+    try:
+        clips = transition_build.clips_for_playlist(session, user_id, server)
+    except Exception as exc:  # pragma: no cover - Plex kann zicken
+        log.warning("Übergänge konnten nicht eingefügt werden: %s", exc)
+        return [i.plex_object for i in items]
+
+    if not clips:
+        return [i.plex_object for i in items]
+    return transition_build.interleave(items, clips)
+
+
+def _request_transition_build(session, user_id: str, items, period) -> None:
+    """Falls für diesen Zeitraum noch keine Clips existieren: im Hintergrund
+    erzeugen lassen. Das Rendern dauert Minuten und darf den Lauf nicht
+    aufhalten."""
+    if not get_settings().transitions_enabled or not items:
+        return
+
+    from app import transition_build
+    from app.scheduler import get_scheduler
+
+    if not transition_build.needs_rebuild(session, user_id, period):
+        return
+    scheduler = get_scheduler()
+    if scheduler is None:
+        return
+    scheduler.request_transition_build(user_id)
+
+
 def sync_user(
     session: Session,
     user_id: str,
@@ -501,7 +543,8 @@ def sync_user(
                     "Playlist umbenannt: »%s« -> »%s«", bisheriger_name, playlist_name
                 )
 
-        outcome = apply_playlist(server, playlist_name, [i.plex_object for i in items])
+        eintraege = _with_transitions(session, user_id, items, server)
+        outcome = apply_playlist(server, playlist_name, eintraege)
         cover_done = apply_cover_after_sync(
             outcome, state.cover_path, state.cover_applied_at is not None
         )
@@ -531,6 +574,7 @@ def sync_user(
 
     note = f"{dropped} durch Blacklist ausgeschlossen" if dropped else ""
     db.log_journey(session, user_id, start, end, len(items), trigger=trigger, note=note)
+    _request_transition_build(session, user_id, items, (start, end))
 
     if outcome.exists:
         message = f"{len(items)} Titel in »{playlist_name}« gespeichert."

@@ -6,13 +6,18 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# ffmpeg kodiert die Übergangsclips, fonts-dejavu liefert die Schriften dafür.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 
 # SQLite liegt im Volume /app/data
-RUN mkdir -p /app/data && \
+RUN mkdir -p /app/data /app/data/transitions && \
     useradd --create-home --uid 1000 ptm && \
     chown -R ptm:ptm /app
 USER ptm

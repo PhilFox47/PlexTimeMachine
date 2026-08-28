@@ -10,6 +10,7 @@ services:
       # Innerhalb des Containers liegen Datenbank und Cover immer im Volume.
       PTM_DATABASE_URL: sqlite:////app/data/plex_time_machine.db
       PTM_COVER_DIR: /app/data/covers
+      PTM_TRANSITION_DIR: /app/data/transitions
     ports:
       - "8088:8080"
     volumes:

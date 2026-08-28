@@ -210,6 +210,56 @@ class FakePlaylist:
         self.server._playlists = [p for p in self.server._playlists if p is not self]
 
 
+class FakeClip:
+    """Ein Video in der Übergangs-Bibliothek."""
+
+    type = "movie"
+
+    def __init__(self, rating_key: int, title: str):
+        self.ratingKey = rating_key
+        self.title = title
+
+    def __repr__(self) -> str:  # pragma: no cover - nur für Testausgabe
+        return f"<Clip {self.title}>"
+
+
+class FakeTransitionSection:
+    """Bibliothek vom Typ "Andere Videos": sieht Dateien erst nach dem Scan."""
+
+    type = "movie"
+
+    def __init__(self, ordner, title: str = "Zeitreise-Übergänge"):
+        self.title = title
+        self.ordner = ordner
+        self.sichtbar: list = []
+        self.scans = 0
+
+    def update(self, **kwargs) -> None:
+        from pathlib import Path
+
+        self.scans += 1
+        self.sichtbar = [
+            FakeClip(9000 + i, p.stem)
+            for i, p in enumerate(sorted(Path(self.ordner).glob("*.mp4")))
+        ]
+
+    def search(self, title=None, libtype=None, maxresults=None, **kwargs):
+        treffer = [c for c in self.sichtbar if title is None or title.lower() in c.title.lower()]
+        return treffer[:maxresults] if maxresults else treffer
+
+
+class FakeLibrary:
+    def __init__(self, abschnitte: dict):
+        self.abschnitte = abschnitte
+
+    def section(self, name):
+        from plexapi.exceptions import NotFound
+
+        if name not in self.abschnitte:
+            raise NotFound(f"Unknown library section {name}")
+        return self.abschnitte[name]
+
+
 class FakeServer:
     def __init__(
         self,
@@ -222,6 +272,17 @@ class FakeServer:
         self.tv_section = FakeSection("Serien", "show", episodes, fail_filters, shows=shows)
         self._playlists: list[FakePlaylist] = []
         self.created: list[str] = []
+        self.transition_section: FakeTransitionSection | None = None
+        self.library = FakeLibrary({})
+
+    def mit_uebergaengen(self, ordner, name: str = "Zeitreise-Übergänge"):
+        """Bibliothek für die Übergangsclips anhängen."""
+        self.transition_section = FakeTransitionSection(ordner, name)
+        self.library = FakeLibrary({name: self.transition_section})
+        return self
+
+    def url(self, path, includeToken=False):
+        return "http://plex.test" + path
 
     def fetchItem(self, rating_key: int):
         """Wie PlexServer.fetchItem: Zugriff über den ratingKey."""

@@ -38,6 +38,8 @@ gepflegte Playlist** aktualisieren. Keine neue Playlist pro Suche.
   „ungesehen“ setzen, um ihn von vorn zu schauen (zweistufige Rückfrage).
 - **Cover-Bilder** – jede Playlist (Zeitreise wie Almanach) bekommt auf Wunsch
   ein eigenes Poster in Plex.
+- **Übergangsclips** – optional erzeugte kurze Videos, die vor jedem Tag der
+  Zeitreise-Playlist das Datum umspringen lassen und zeigen, was gleich kommt.
 - **Sammlungen gemeinsam nutzen** – ein Almanach lässt sich für weitere
   Home-User freigeben: ein Inhalt für alle, aber je Profil eine eigene Playlist
   mit dem eigenen Watch-Status.
@@ -96,6 +98,10 @@ cp .env.example .env && $EDITOR .env
 uvicorn app.main:app --reload --port 8080
 ```
 
+Für die Übergangsclips wird zusätzlich `ffmpeg` im `PATH` gebraucht (im
+Docker-Image ist es enthalten); ohne FFmpeg bleibt einfach dieses eine Feature
+aus.
+
 ## Konfiguration
 
 Alle Einstellungen kommen aus Umgebungsvariablen mit dem Präfix `PTM_`
@@ -117,6 +123,12 @@ Alle Einstellungen kommen aus Umgebungsvariablen mit dem Präfix `PTM_`
 | `PTM_COVER_DIR` | `./data/covers` | Ablage der Cover-Bilder |
 | `PTM_COVER_MAX_BYTES` | `5242880` | Größtes erlaubtes Cover (5 MB) |
 | `PTM_PREVIEW_LIMIT` | `400` | Maximale Zeilen in der Vorschau (`0` = unbegrenzt) |
+| `PTM_TRANSITIONS_ENABLED` | `false` | Übergangsclips erzeugen und einweben |
+| `PTM_TRANSITION_DIR` | `./data/transitions` | Ordner für die Clips (in Plex als „Andere Videos“ einbinden) |
+| `PTM_TRANSITION_LIBRARY` | `Zeitreise-Übergänge` | Name dieser Bibliothek in Plex |
+| `PTM_TRANSITION_MAX_CLIPS` | `7` | Höchstzahl Clips je Lauf (7 = eine Woche) |
+| `PTM_TRANSITION_HEIGHT` | `1080` | Auflösung der Clips (`720` rendert etwa dreimal schneller) |
+| `PTM_FFMPEG_BINARY` | `ffmpeg` | Pfad zum FFmpeg-Binary (im Docker-Image enthalten) |
 
 Die Playlist enthält immer **alle** Treffer – das Limit betrifft nur die Anzeige.
 
@@ -252,6 +264,42 @@ Playlist selbst verschwindet dann ohnehin, weil Plex keine leere halten kann).
 Über `PTM_PLAYLIST_NAME_TEMPLATE` lässt sich das Muster ändern; verfügbar sind
 `{weekday}`, `{date}` und `{user}`.
 
+### Übergänge zwischen den Tagen
+
+Optional legt die Zeitreise vor jeden Tag einen kurzen, selbst gerenderten Clip
+in die Playlist: das Datum rollt vom vorherigen auf den nächsten Tag um, danach
+erscheint auf **einem** Bild, was an diesem Tag ansteht – Poster, `S02E05` und
+Episodentitel je Eintrag. Bei Serien wird bewusst das **Staffelposter**
+verwendet. Das Raster skaliert mit der Menge (1 bis 10 Kacheln); mehr Titel
+werden als „+3 weitere“ zusammengefasst. Tage ohne Treffer kommen nicht vor –
+der Roll springt direkt auf den nächsten Tag mit Inhalt, der erste Clip einer
+Woche startet am Beginn des gewählten Zeitraums.
+
+Die Clips sind stumme H.264-Dateien (mit leerer Tonspur, damit Plex sie sauber
+abspielt) und liegen als `Time Machine - Tuesday 25.08.2026 - Phil.mp4` im
+Ordner aus `PTM_TRANSITION_DIR`.
+
+**Einrichtung** (einmalig):
+
+1. Ordner sichtbar machen: Im Docker-Setup zeigt `PTM_TRANSITION_DIR` auf
+   `/app/data/transitions`, das über das `./data`-Volume auch auf dem Host
+   liegt (z. B. `…\plex-time-machine\data\transitions`).
+2. In Plex eine neue Bibliothek vom Typ **Andere Videos** auf genau diesen
+   Ordner anlegen und exakt so benennen wie `PTM_TRANSITION_LIBRARY`.
+3. Erst danach `PTM_TRANSITIONS_ENABLED=true` setzen und den Container neu
+   starten.
+
+**Ablauf pro Woche:** Beim ersten Sync eines neuen Zeitraums werden die alten
+Clips gelöscht und die neuen im Hintergrund gerendert (FFmpeg steckt im Image).
+Danach stößt die App einen Scan der Übergangs-Bibliothek an, wartet, bis Plex
+die Dateien kennt, und synchronisiert die Playlist noch einmal – dann stehen die
+Clips an ihrem Platz. Der laufende Sync wird davon nie blockiert: solange ein
+Clip fehlt, entsteht die Playlist einfach ohne ihn.
+
+Die Clips zählen nicht als „gesehen“ und werden deshalb auch nicht automatisch
+entfernt; sie verschwinden mit dem Wechsel auf die nächste Woche. Almanach-
+Playlists bleiben unberührt – Übergänge gibt es nur für die Zeitreise.
+
 ### Cover für die Playlists
 
 Sowohl die Zeitreise-Playlist (im Cockpit) als auch jeder Almanach haben einen
@@ -350,6 +398,8 @@ app/
 ├── db.py            SQLModel/SQLite: UserState, BlacklistEntry, JourneyLog
 ├── plex_client.py   plexapi-Wrapper inkl. Home-User-Impersonation
 ├── sync_engine.py   Suche, Blacklist-Filter, Merge/Sort, Playlist-Pflege
+├── transitions.py   Rendert die Übergangsclips (Pillow + FFmpeg)
+├── transition_build.py  Clips planen, bauen, Plex scannen, einweben
 ├── scheduler.py     APScheduler: Polling + entprellte Webhook-Syncs
 ├── templates/       Jinja2 (dashboard, blacklist, logbook, partials)
 └── static/          Theme-CSS und lokal abgelegtes htmx
@@ -363,9 +413,13 @@ app/
    randscharf-exklusiv, deshalb serverseitig weiten und clientseitig prüfen)
 4. Blacklist anwenden: Filme über `ratingKey`, Episoden über `grandparentRatingKey`
 5. Chronologisch sortieren (Datum → Film vor Episode → Serie → Staffel/Folge)
-6. Feste Playlist leeren und in dieser Reihenfolge neu befüllen
+6. Vorhandene Übergangsclips vor den jeweils ersten Titel eines Tages setzen
+   (nur wenn `PTM_TRANSITIONS_ENABLED` gesetzt ist)
+7. Feste Playlist leeren und in dieser Reihenfolge neu befüllen
    (ohne Treffer wird sie entfernt – Plex kann keine leere Playlist halten)
-7. `UserState` fortschreiben und Logbuch-Eintrag anlegen
+8. `UserState` fortschreiben und Logbuch-Eintrag anlegen
+9. Bei einem neuen Zeitraum: alte Clips verwerfen, neue im Hintergrund rendern
+   und danach ein zweites Mal synchronisieren
 
 Ausgelöst wird das durch den UI-Knopf, eine Blacklist-Änderung, das Polling oder
 ein Webhook-Event.
@@ -408,9 +462,11 @@ Die Suite deckt Suche, Sortierung, Blacklist-Logik, Playlist-Pflege (inkl.
 Leeren, Nachfüllen in Blöcken und dem Fall, dass Plex eine leer geräumte
 Playlist selbst entfernt), Wochenrechnung und Wochentagsanzeige, den Almanach
 (Titelsuche, Serien-Auflösung, Release-Order, fehlende Einträge), die Freigabe an andere
-Profile inklusive getrennter Watch-Stände, Cover-Prüfung und -Übertragung sowie
-Scheduler-Entprellung und alle HTTP-Endpunkte gegen ein Plex-Double ab –
-ein echter Plex-Server wird dafür nicht gebraucht.
+Profile inklusive getrennter Watch-Stände, Cover-Prüfung und -Übertragung,
+die Übergangsclips (Raster, Laufzeit, Tagesgruppierung, Staffelposter und ein
+echter FFmpeg-Rendervorgang in 360p) sowie Scheduler-Entprellung und alle
+HTTP-Endpunkte gegen ein Plex-Double ab – ein echter Plex-Server wird dafür
+nicht gebraucht.
 
 Bestehende Datenbanken werden beim Start automatisch um neue Spalten ergänzt;
 ein Update kostet also keine Blacklist- oder Logbuch-Einträge. Ein Almanach aus
