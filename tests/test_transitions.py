@@ -36,8 +36,8 @@ def _tafel(anzahl: int, hoehe: int = 360):
     return stage, transitions.Board(stage, spec)
 
 
-@pytest.mark.parametrize("anzahl", [1, 2, 3, 5])
-def test_up_to_five_titles_stand_still(anzahl):
+@pytest.mark.parametrize("anzahl", [1, 2, 3])
+def test_a_short_day_stands_still(anzahl):
     """Was auf die Tafel passt, wird nicht bewegt."""
     _, board = _tafel(anzahl)
 
@@ -47,7 +47,7 @@ def test_up_to_five_titles_stand_still(anzahl):
     assert board.positionen[-1] + board.hoehe <= board.fenster_h + 1
 
 
-@pytest.mark.parametrize("anzahl", [6, 9, 14, 24])
+@pytest.mark.parametrize("anzahl", [4, 6, 9, 24])
 def test_longer_days_scroll_until_the_last_title_was_shown(anzahl):
     """Alles darüber scrollt – und zwar genau so weit, dass nichts fehlt."""
     _, board = _tafel(anzahl)
@@ -58,8 +58,9 @@ def test_longer_days_scroll_until_the_last_title_was_shown(anzahl):
     # Am Ende steht die letzte Zeile vollständig im Fenster.
     letzte = board.positionen[-1] - board.scroll_at(dauer, dauer) + board.hoehe
     assert letzte == pytest.approx(board.fenster_h, abs=2)
-    # Die Zeilenhöhe bleibt dieselbe wie bei einer kurzen Liste.
-    assert board.hoehe == _tafel(3)[1].hoehe
+    # Die Zeilenhöhe bleibt dieselbe wie bei einer kurzen Liste – die Karten
+    # schrumpfen also nie, egal wie voll der Tag ist.
+    assert board.hoehe == _tafel(2)[1].hoehe
 
 
 def test_the_scroll_only_starts_after_the_first_titles_were_read():
@@ -82,14 +83,28 @@ def test_very_long_days_are_summarised():
 
 def test_duration_follows_the_number_of_titles():
     kurz = transitions.clip_duration(1)
-    voll = transitions.clip_duration(5)
+    voll = transitions.clip_duration(3)
 
     assert kurz < voll
-    # Bis fünf Titel bleibt der Clip in der Länge des Klangs (rund neun Sekunden).
-    assert voll == pytest.approx(9.25, abs=0.3)
+    # Passt der Tag auf eine Tafel, bleibt der Clip etwa so lang wie der Klang.
+    assert voll == pytest.approx(8.35, abs=0.4)
     # Danach wächst er gleichmäßig mit jeder weiteren Zeile.
-    schritte = [transitions.clip_duration(n) for n in (6, 7, 8)]
+    schritte = [transitions.clip_duration(n) for n in (5, 6, 7)]
     assert all(b - a == pytest.approx(0.85, abs=0.01) for a, b in zip(schritte, schritte[1:]))
+
+
+def test_a_long_day_ends_with_a_line_for_the_rest():
+    """Über der Obergrenze steht keine Karte mehr, sondern eine ruhige Zeile."""
+    stage = transitions.Stage(360)
+    spec = ClipSpec("MONDAY", "24.08.2026", "TUESDAY", "25.08.2026",
+                    [ClipItem("movie", f"Film {i}", f"Film {i}", year=1985, slot="20:15")
+                     for i in range(transitions.MAX_ROWS + 6)])
+
+    board = transitions.Board(stage, spec)
+
+    assert spec.extra == 6
+    assert len(board.zeilen) == transitions.MAX_ROWS + 1          # plus Schlusszeile
+    assert board.zeilen[-1].height < board.hoehe                  # flacher als eine Karte
 
 
 # ---------------------------------------------------------------------------

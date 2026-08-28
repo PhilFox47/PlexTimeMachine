@@ -340,14 +340,16 @@ weiß):
 1. **Sendetag** – das Datum rollt wie ein Zählwerk vom vorherigen auf den
    nächsten Tag mit Inhalt um. Diese Szene behält bewusst die Cockpit-Optik der
    Oberfläche (Bernstein auf Schwarz) und ist mit einem Chime unterlegt.
-2. **UP NEXT** – das Tagesprogramm als Liste an einer Zeitachse: Poster,
-   `S02 • E03` bzw. `FILM`, Titel und rechts der **Sendeplatz**. Bei Serien wird
-   bewusst das **Staffelposter** verwendet.
+2. **UP NEXT** – das Tagesprogramm als Liste an einer Zeitachse: großes Poster,
+   `S02 • E03` bzw. `FILM`, die Herkunft gedämpft daneben, darunter der Titel
+   und rechts der **Sendeplatz**. Bei Serien wird bewusst das **Staffelposter**
+   verwendet; links steht der Sendetag unter der Rubrik.
 
-Fünf Zeilen stehen gleichzeitig auf der Tafel. Sind es mehr, **scrollt die
-Liste** in einem Zug durch, bis der letzte Titel des Tages zu sehen war – der
-Clip wird dabei entsprechend länger (rund 0,85 Sekunden je zusätzliche Zeile).
-Ab 24 Titeln macht die Fußzeile mit „+3 weitere“ Schluss.
+Drei Karten stehen gleichzeitig auf der Tafel – groß genug, dass die Poster
+wirken. Sind es mehr, **scrollt die Liste** in einem Zug durch, bis der letzte
+Titel des Tages zu sehen war; die Karten schrumpfen dabei nie. Der Clip wird
+entsprechend länger (rund 0,85 Sekunden je zusätzliche Zeile). Ab 24 Titeln
+schließt eine ruhige Zeile mit „+6 weitere“ ab.
 
 Tage ohne Treffer kommen nicht vor – der Roll springt direkt auf den nächsten
 Tag mit Inhalt, der erste Clip einer Woche startet am Beginn des gewählten

@@ -27,7 +27,8 @@ log = logging.getLogger(__name__)
 FPS = 24
 
 #: So viele Zeilen stehen gleichzeitig auf der Tafel – der Rest scrollt nach.
-VISIBLE_ROWS = 5
+#: Wenige, dafür große Karten: die Poster sollen wirken.
+VISIBLE_ROWS = 3
 
 #: Irgendwo ist Schluss: darüber hinaus wird in der Fußzeile zusammengefasst.
 MAX_ROWS = 24
@@ -218,6 +219,45 @@ def _cover(img: Image.Image, size: tuple[int, int]) -> Image.Image:
     return img.resize(size, Image.LANCZOS)
 
 
+def _rounded_mask(size: tuple[int, int], radius: float, scale: int = 4) -> Image.Image:
+    """Abgerundete Maske ohne Treppen.
+
+    Pillow zeichnet Rundungen hart; deshalb wird vierfach vergrößert gezeichnet
+    und dann verkleinert. Das kostet fast nichts und ist der Unterschied
+    zwischen „selbst gebastelt" und „sauber".
+    """
+    w, h = size
+    gross = Image.new("L", (w * scale, h * scale), 0)
+    ImageDraw.Draw(gross).rounded_rectangle(
+        [0, 0, w * scale - 1, h * scale - 1], radius=max(1, int(radius * scale)), fill=255
+    )
+    return gross.resize((w, h), Image.LANCZOS)
+
+
+def _ring_mask(size: tuple[int, int], radius: float, width: float, scale: int = 4) -> Image.Image:
+    """Dasselbe für eine Kontur – als Maske, damit auch sie glatt bleibt."""
+    w, h = size
+    gross = Image.new("L", (w * scale, h * scale), 0)
+    ImageDraw.Draw(gross).rounded_rectangle(
+        [0, 0, w * scale - 1, h * scale - 1],
+        radius=max(1, int(radius * scale)),
+        outline=255,
+        width=max(1, int(width * scale)),
+    )
+    return gross.resize((w, h), Image.LANCZOS)
+
+
+def _circle(bild: Image.Image, mitte: tuple[float, float], radius: float, farbe,
+            scale: int = 4) -> None:
+    """Runder Punkt mit glatter Kante."""
+    r = max(1, int(radius))
+    kante = Image.new("L", (r * 2 * scale, r * 2 * scale), 0)
+    ImageDraw.Draw(kante).ellipse([0, 0, r * 2 * scale - 1, r * 2 * scale - 1], fill=255)
+    kante = kante.resize((r * 2, r * 2), Image.LANCZOS)
+    flaeche = Image.new("RGBA", (r * 2, r * 2), tuple(farbe) + (255,))
+    bild.paste(flaeche, (int(mitte[0] - r), int(mitte[1] - r)), kante)
+
+
 def _gradient(size: tuple[int, int], links, rechts) -> Image.Image:
     """Waagerechter Verlauf – für Logo und Karten."""
     w, h = size
@@ -301,9 +341,8 @@ class Stage:
         self.linie_x = 0.356 * self.w
         self.karte_x0 = 0.375 * self.w
         self.karte_x1 = 0.972 * self.w
-        self.liste_oben = 0.062 * h
-        self.liste_unten = 0.885 * h
-        self.fuss_y = 0.944 * h
+        self.liste_oben = 0.070 * h
+        self.liste_unten = 0.930 * h
 
         self.background = self._background()
 
@@ -362,16 +401,13 @@ class Stage:
             fill=strich,
         )
 
-    def footer(self, img: Image.Image, extra: int = 0) -> None:
+    def subline(self, img: Image.Image, text: str) -> None:
+        """Kleine Zeile unter der Rubrik – hier steht der Sendetag."""
+        if not text:
+            return
         d = ImageDraw.Draw(img)
-        x = self.karte_x0
-        spur = 0.11 * self.f_fuss.size
-        x += _track(d, (x, self.fuss_y), "ZEITEN IN 24H", self.f_fuss, ORANGE, spur, "lm")
-        x += _track(d, (x + 0.012 * self.w, self.fuss_y), "•", self.f_fuss, GRAU, spur, "lm")
-        text = "ALLE ANGABEN OHNE GEWÄHR"
-        if extra:
-            text += f"   •   +{extra} WEITERE"
-        _track(d, (x + 0.022 * self.w, self.fuss_y), text, self.f_fuss, GRAU, spur, "lm")
+        _track(d, (self.rand, 0.395 * self.h), text.upper(), self.f_fuss, GRAU,
+               0.14 * self.f_fuss.size, "lm")
 
     def base(self) -> Image.Image:
         img = self.background.copy()
@@ -436,55 +472,84 @@ def _clapper(d: ImageDraw.ImageDraw, x: float, y: float, groesse: float, farbe) 
 def _row(stage: Stage, item: ClipItem, size: tuple[int, int]) -> Image.Image:
     """Eine Programmzeile als fertiges Bild – wird je Clip nur einmal gebaut."""
     w, h = size
-    radius = int(0.14 * h)
+    radius = 0.085 * h
     karte = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    flaeche = _gradient((w, h), CARD, CARD_2).convert("RGBA")
-    maske = Image.new("L", (w, h), 0)
-    ImageDraw.Draw(maske).rounded_rectangle([0, 0, w - 1, h - 1], radius=radius, fill=255)
-    karte.paste(flaeche, (0, 0), maske)
+
+    # Fläche mit weicher Kante
+    maske = _rounded_mask((w, h), radius)
+    karte.paste(_gradient((w, h), CARD, CARD_2).convert("RGBA"), (0, 0), maske)
+    # Hauchfeine Kontur – gibt der Karte eine Kante, ohne zu umranden
+    kontur = Image.new("RGBA", (w, h), CARD_LINE + (255,))
+    karte.paste(kontur, (0, 0), _ring_mask((w, h), radius, max(1, h // 220)))
+
+    # Poster: eingerückt statt randlos, mit eigener Rundung
+    luft = int(0.085 * h)
+    ph = h - 2 * luft
+    pw = int(ph * 2 / 3)
+    poster = _poster(item, (pw, ph)).convert("RGBA")
+    poster_maske = _rounded_mask((pw, ph), radius * 0.75)
+    karte.paste(poster, (luft, luft), poster_maske)
+    karte.paste(Image.new("RGBA", (pw, ph), (255, 255, 255, 26)), (luft, luft),
+                _ring_mask((pw, ph), radius * 0.75, max(1, h // 260)))
 
     d = ImageDraw.Draw(karte)
-    d.rounded_rectangle([0, 0, w - 1, h - 1], radius=radius, outline=CARD_LINE + (255,), width=1)
+    f_meta = _font(stage.bold, 0.125 * h)
+    f_titel = _font(stage.sans, 0.200 * h)
+    f_zeit = _font(stage.bold, 0.160 * h)
+    spur = 0.07 * f_meta.size
 
-    # Poster links, bündig mit der Kartenhöhe
-    pw = int(h * 2 / 3)
-    poster = _poster(item, (pw, h)).convert("RGBA")
-    ecken = Image.new("L", (pw, h), 0)
-    ImageDraw.Draw(ecken).rounded_rectangle([0, 0, pw - 1, h - 1], radius=radius, fill=255)
-    ImageDraw.Draw(ecken).rectangle([pw // 2, 0, pw - 1, h - 1], fill=255)
-    karte.paste(poster, (0, 0), ecken)
-
-    f_meta = _font(stage.bold, 0.185 * h)
-    f_titel = _font(stage.sans, 0.265 * h)
-    f_zeit = _font(stage.bold, 0.215 * h)
-    spur = 0.06 * f_meta.size
-
-    x = pw + 0.055 * w
-    y_meta = 0.33 * h
-    y_titel = 0.70 * h
+    x = luft + pw + int(0.14 * h)
+    rechts = w - 0.055 * h
+    y_meta = 0.375 * h
+    y_titel = 0.645 * h
 
     zeit = item.slot or ""
     zeit_breite = _track_width(zeit, f_zeit, 0.04 * f_zeit.size)
-    rechts = w - 0.022 * w
     if zeit:
-        _track(d, (rechts, y_meta), zeit, f_zeit, ORANGE, 0.04 * f_zeit.size, "rm")
+        _track(d, (rechts, y_meta + 0.015 * h), zeit, f_zeit, ORANGE, 0.04 * f_zeit.size, "rm")
+
+    # Kopfzeile: Nummer bzw. FILM, dahinter gedämpft die Herkunft.
+    # ``setze`` rückt zuerst um den Abstand vor und schiebt dann um die Breite
+    # weiter – sonst wandert alles Folgende nach links.
+    cursor = x
+
+    def setze(abstand: float, text: str, farbe) -> None:
+        nonlocal cursor
+        cursor += abstand
+        cursor += _track(d, (cursor, y_meta), text, f_meta, farbe, spur, "lm")
 
     if item.kind == "episode" and item.season is not None and item.episode is not None:
-        cursor = x
-        cursor += _track(d, (cursor, y_meta), f"S{item.season:02d}", f_meta, ORANGE, spur, "lm")
-        cursor += _track(d, (cursor + 0.014 * w, y_meta), "•", f_meta, (120, 120, 120), spur, "lm")
-        _track(d, (cursor + 0.028 * w, y_meta), f"E{item.episode:02d}", f_meta, ORANGE, spur, "lm")
+        setze(0, f"S{item.season:02d}", ORANGE)
+        setze(0.07 * h, "•", (110, 110, 110))
+        setze(0.07 * h, f"E{item.episode:02d}", ORANGE)
+        beiwerk = item.show or ""
     elif item.kind == "episode":
-        _track(d, (x, y_meta), _shorten(item.show, f_meta, w - x - zeit_breite - 0.06 * w),
-               f_meta, ORANGE, spur, "lm")
+        beiwerk = item.show or ""
     else:
-        breite = _clapper(d, x, y_meta, f_meta.size * 1.05, ORANGE)
-        _track(d, (x + breite + 0.016 * w, y_meta), "FILM", f_meta, ORANGE, spur, "lm")
+        cursor += _clapper(d, cursor, y_meta, f_meta.size * 1.05, ORANGE)
+        setze(0.09 * h, "FILM", ORANGE)
+        beiwerk = str(item.year or "")
 
-    platz = rechts - x - (zeit_breite + 0.03 * w if zeit else 0)
+    if beiwerk:
+        platz = rechts - cursor - 0.30 * h - (zeit_breite if zeit else 0)
+        if platz > f_meta.size * 3:
+            setze(0.11 * h, "·", (90, 90, 90))
+            setze(0.11 * h, _shorten(beiwerk, f_meta, platz), GRAU)
+
+    platz = rechts - x - (zeit_breite + 0.16 * h if zeit else 0)
     titel = item.title or item.show
     d.text((x, y_titel), _shorten(titel, f_titel, platz), font=f_titel, fill=WEISS, anchor="lm")
     return karte
+
+
+def _overflow_row(stage: Stage, anzahl: int, size: tuple[int, int]) -> Image.Image:
+    """Schlusszeile ohne Karte: „+6 weitere Titel"."""
+    w, h = size
+    zeile = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(zeile)
+    f = _font(stage.bold, 0.150 * h)
+    _track(d, (0.10 * h, h / 2), f"+{anzahl} WEITERE", f, GRAU, 0.14 * f.size, "lm")
+    return zeile
 
 
 def board_duration(item_count: int) -> float:
@@ -508,8 +573,8 @@ class Board:
         items = spec.shown or []
         n = max(1, len(items))
 
-        self.hoehe = int(0.152 * stage.h)     # feste Zeilenhöhe – Zeilen scrollen
-        schritt = self.hoehe + int(0.013 * stage.h)
+        self.hoehe = int(0.255 * stage.h)     # feste Zeilenhöhe – Zeilen scrollen
+        schritt = self.hoehe + int(0.020 * stage.h)
         gesamt = (n - 1) * schritt + self.hoehe
 
         # Ausschnitt: Zeitachse plus Karten. Alles darin wird beschnitten,
@@ -528,14 +593,23 @@ class Board:
         self.linie_x = int(stage.linie_x) - self.fenster_x
         self.positionen = [oben + k * schritt for k in range(n)]
         self.zeilen = [_row(stage, item, (self.breite, self.hoehe)) for item in items]
+        if spec.extra:
+            # Der Rest bekommt keine Karte, sondern eine ruhige Schlusszeile.
+            self.positionen.append(oben + n * schritt)
+            self.zeilen.append(
+                _overflow_row(stage, spec.extra, (self.breite, int(self.hoehe * 0.45)))
+            )
+            gesamt = self.positionen[-1] + int(self.hoehe * 0.45)
+            self.max_scroll = max(0, gesamt - self.fenster_h)
 
         self.static = stage.base()
         stage.label(self.static, "UP NEXT")
-        stage.footer(self.static, spec.extra)
+        stage.subline(self.static, f"{spec.weekday} · {spec.date}")
         self.leer = stage.base()
         # Weiche Kanten nur dort, wo die Liste wirklich weitergeht.
         self.saum_oben = self._saum(True) if self.max_scroll else None
         self.saum_unten = self._saum(False) if self.max_scroll else None
+        self.punkt = int(0.011 * stage.h)
 
     def _saum(self, oben: bool) -> Image.Image:
         """Auslaufende Kante – sonst reißen durchscrollende Zeilen hart ab."""
@@ -578,7 +652,7 @@ class Board:
         for k, ein in enumerate(auftritte):
             if ein <= 0:
                 break
-            unten = self.positionen[k] - scroll + self.hoehe * min(1.0, ein)
+            unten = self.positionen[k] - scroll + self.zeilen[k].height * min(1.0, ein)
         if unten > oben:
             d.rectangle(
                 [self.linie_x, max(0, oben),
@@ -591,7 +665,7 @@ class Board:
             if ein <= 0:
                 continue
             y = int(self.positionen[k] - scroll)
-            if y > self.fenster_h or y + self.hoehe < 0:
+            if y > self.fenster_h or y + zeile.height < 0:
                 continue
             versatz = int(0.035 * self.stage.w * (1 - ein))
             if ein >= 1:
@@ -601,10 +675,9 @@ class Board:
                 weich.putalpha(zeile.getchannel("A").point(lambda v: int(v * ein)))
                 schicht.alpha_composite(weich, (self.karte_x + versatz, y))
 
-            r = int(self.punkt * min(1.0, ein * 1.4))
-            mitte = y + self.hoehe / 2
-            d.ellipse([self.linie_x - r + 1, mitte - r, self.linie_x + r + 1, mitte + r],
-                      fill=ORANGE)
+            if k < len(self.spec.shown):     # die Schlusszeile bekommt keinen Punkt
+                r = self.punkt * min(1.0, ein * 1.4)
+                _circle(schicht, (self.linie_x + 1, y + zeile.height / 2), r, ORANGE)
 
         if self.max_scroll:
             kanal = schicht.getchannel("A")
