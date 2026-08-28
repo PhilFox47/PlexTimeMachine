@@ -364,6 +364,20 @@ def plex_data() -> dict[str, list[Any]]:
 
 
 @pytest.fixture
+def client(gateway):
+    """Die App über HTTP, mit dem Plex-Double dahinter."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.plex_client import set_gateway
+
+    set_gateway(gateway)
+    with TestClient(app) as test_client:
+        yield test_client
+    set_gateway(None)
+
+
+@pytest.fixture
 def gateway(plex_data) -> FakeGateway:
     return FakeGateway(
         FakeServer(plex_data["movies"], plex_data["episodes"], shows=plex_data["shows"])

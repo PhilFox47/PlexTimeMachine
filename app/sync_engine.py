@@ -9,7 +9,7 @@ from typing import Any, Iterable, Optional, Sequence
 
 from sqlmodel import Session
 
-from app import covers, db
+from app import covers, db, slots
 from app.config import get_settings
 from app.formatting import format_date
 from app.plex_client import PlexGateway, PlexUnavailable, get_gateway
@@ -45,6 +45,7 @@ class PreviewItem:
     thumb: str = ""
     parent_thumb: str = ""   # bei Episoden das Staffelposter
     duration_minutes: Optional[int] = None
+    slot: str = ""           # Sendeplatz "HH:MM", gesetzt von slots.apply_slots
     plex_object: Any = field(default=None, repr=False, compare=False)
 
     @property
@@ -63,6 +64,15 @@ class PreviewItem:
     @property
     def air_date_display(self) -> str:
         return format_date(self.air_date)
+
+    @property
+    def slot_display(self) -> str:
+        return self.slot or (slots.MOVIE_SLOT if not self.is_episode else slots.DEFAULT_SERIES_SLOT)
+
+    @property
+    def slot_editable(self) -> bool:
+        """Nur Serien haben einen wählbaren Platz – Filme laufen zur Primetime."""
+        return self.is_episode
 
     @property
     def sort_key(self) -> tuple:
@@ -250,9 +260,17 @@ def _search_section(section: Any, start: date, end: date, libtype: str) -> list[
 
 
 def collect_items(
-    gateway: PlexGateway, server: Any, start: date, end: date
+    gateway: PlexGateway,
+    server: Any,
+    start: date,
+    end: date,
+    sendeplaetze: Optional[dict[str, str]] = None,
 ) -> list[PreviewItem]:
-    """Alle ungesehenen Filme + Episoden im Zeitraum, chronologisch sortiert."""
+    """Alle ungesehenen Filme + Episoden im Zeitraum, nach Sendeplatz sortiert.
+
+    ``sendeplaetze`` sind die gespeicherten Plätze als ``{ratingKey: "HH:MM"}``;
+    ohne Angabe laufen alle Serien auf ihrem Standardplatz.
+    """
     movies = _search_section(gateway.movie_section(server), start, end, "movie")
     episodes = _search_section(gateway.tv_section(server), start, end, "episode")
 
@@ -264,8 +282,7 @@ def collect_items(
         if item is not None and _in_range(item, start, end):
             items.append(item)
 
-    items.sort(key=lambda i: i.sort_key)
-    return items
+    return slots.apply_slots(items, sendeplaetze or {})
 
 
 def apply_blacklist(
@@ -300,9 +317,10 @@ def build_preview(
     if end < start:
         start, end = end, start
 
+    sendeplaetze = db.all_slots(session)
     try:
         server = gateway.connect_as(user_id)
-        raw = collect_items(gateway, server, start, end)
+        raw = collect_items(gateway, server, start, end, sendeplaetze)
     except PlexUnavailable as exc:
         return PreviewResult(error=str(exc))
     except Exception as exc:  # pragma: no cover - unerwartete plexapi-Fehler
@@ -524,13 +542,14 @@ def sync_user(
 
     start, end = state.current_date_start, state.current_date_end
     blacklist = db.blacklist_keys(session, user_id)
+    sendeplaetze = db.all_slots(session)
     # Transaktion schließen, bevor es zu Plex geht: sonst liegt die Datenbank
     # für die Dauer der Abfragen fest und die Oberfläche läuft in Sperren.
     session.commit()
 
     try:
         server = gateway.connect_as(user_id)
-        raw = collect_items(gateway, server, start, end)
+        raw = collect_items(gateway, server, start, end, sendeplaetze)
         items, dropped = apply_blacklist(raw, blacklist)
 
         # Der Name richtet sich nach dem ältesten Titel, der noch drin ist.

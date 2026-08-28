@@ -22,18 +22,21 @@ ERA_START = date(1985, 1, 1)
 ERA_END = date(1985, 12, 31)
 
 
-def test_collect_merges_and_sorts_chronologically(gateway):
+def test_collect_merges_and_sorts_by_day_and_slot(gateway):
     items = collect_items(gateway, gateway.server, ERA_START, ERA_END)
 
     assert [i.display_title for i in items] == [
-        "Brazil",
         "Das A-Team – S03E05 Showdown",
+        "Brazil",
         "Zurück in die Zukunft",
         "Knight Rider – S01E01 Pilot",
         "Knight Rider – S01E02 Folge 2",
     ]
-    # Gleiches Datum: Film vor Episode, Episoden in Reihenfolge der Nummer.
+    # Gleicher Tag: erst der Serien-Sendeplatz (10:00), dann der Film (20:15).
     assert items[0].air_date == items[1].air_date == date(1985, 2, 22)
+    assert (items[0].slot, items[1].slot) == ("10:00", "20:15")
+    # Episoden derselben Serie bleiben in ihrer Reihenfolge.
+    assert [i.episode for i in items[3:]] == [1, 2]
 
 
 def test_collect_filters_out_of_range_items(gateway):
@@ -105,8 +108,8 @@ def test_watched_items_never_enter_the_playlist(gateway, plex_data):
     items = collect_items(gateway, gateway.server, ERA_START, ERA_END)
 
     assert [i.display_title for i in items] == [
-        "Brazil",
         "Das A-Team – S03E05 Showdown",
+        "Brazil",
         "Knight Rider – S01E02 Folge 2",
     ]
 

@@ -369,6 +369,38 @@ tbody tr:hover { background: rgba(41, 215, 200, 0.05); }
 .cell-sub { color: var(--text-dim); font-size: 12px; }
 .cell-date { font-family: var(--font-digit); color: var(--amber); white-space: nowrap; }
 
+/* --- Sendeplatz --------------------------------------------------------- */
+
+.cell-slot { white-space: nowrap; }
+
+.slot-input {
+  font-family: var(--font-digit);
+  font-size: 14px;
+  color: var(--teal);
+  background: var(--bg-panel-2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 3px 6px;
+  /* Breit genug, dass auch Browser mit 12-Stunden-Anzeige das "PM" zeigen. */
+  width: 9em;
+}
+
+.slot-input:hover { border-color: var(--teal-dim); }
+
+.slot-input:focus {
+  outline: none;
+  border-color: var(--teal);
+  box-shadow: 0 0 0 2px rgba(41, 215, 200, 0.15);
+}
+
+.slot-fixed {
+  font-family: var(--font-digit);
+  font-size: 14px;
+  color: var(--amber);
+  opacity: 0.75;
+  padding: 3px 6px;
+}
+
 .badge {
   display: inline-block;
   font-size: 10px;

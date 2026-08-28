@@ -137,6 +137,23 @@ class TransitionClip(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow)
 
 
+class SeriesSlot(SQLModel, table=True):
+    """Sendeplatz einer Serie – wie im Fernsehprogramm.
+
+    Gilt bewusst für alle Profile: der Sendeplatz gehört zur Serie, nicht zum
+    Zuschauer. Filme haben immer denselben festen Platz und stehen deshalb
+    nicht in dieser Tabelle.
+    """
+
+    __tablename__ = "series_slot"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    plex_rating_key: str = Field(index=True, unique=True)
+    title: str = ""
+    slot: str = ""           # "HH:MM"
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
 class JourneyLog(SQLModel, table=True):
     """Logbuch: eine Zeile pro ausgeführter Zeitreise."""
 
@@ -707,6 +724,60 @@ def drop_transition_clips(session: Session, user_id: str) -> list[str]:
         session.delete(clip)
     session.commit()
     return namen
+
+
+# ---------------------------------------------------------------------------
+# Sendeplätze
+# ---------------------------------------------------------------------------
+
+
+def all_slots(session: Session) -> dict[str, str]:
+    """Alle gesetzten Sendeplätze als {ratingKey: "HH:MM"}.
+
+    Bewusst in einem Rutsch: die Tabelle ist winzig, und der Aufrufer kann sie
+    einlesen, *bevor* er mit Plex spricht – so hängt keine Transaktion an einer
+    langsamen Netzabfrage.
+    """
+    return {
+        eintrag.plex_rating_key: eintrag.slot
+        for eintrag in session.exec(select(SeriesSlot)).all()
+        if eintrag.slot
+    }
+
+
+def list_slots(session: Session) -> Sequence[SeriesSlot]:
+    return session.exec(select(SeriesSlot).order_by(SeriesSlot.slot, SeriesSlot.title)).all()
+
+
+def get_slot(session: Session, rating_key: str) -> Optional[SeriesSlot]:
+    return session.exec(
+        select(SeriesSlot).where(SeriesSlot.plex_rating_key == str(rating_key))
+    ).first()
+
+
+def set_slot(session: Session, rating_key: str, slot: str, title: str = "") -> SeriesSlot:
+    """Sendeplatz setzen oder ändern."""
+    eintrag = get_slot(session, rating_key)
+    if eintrag is None:
+        eintrag = SeriesSlot(plex_rating_key=str(rating_key))
+    eintrag.slot = slot
+    if title:
+        eintrag.title = title
+    eintrag.updated_at = utcnow()
+    session.add(eintrag)
+    session.commit()
+    session.refresh(eintrag)
+    return eintrag
+
+
+def clear_slot(session: Session, rating_key: str) -> bool:
+    """Sendeplatz entfernen – die Serie fällt auf den Standard zurück."""
+    eintrag = get_slot(session, rating_key)
+    if eintrag is None:
+        return False
+    session.delete(eintrag)
+    session.commit()
+    return True
 
 
 def log_journey(

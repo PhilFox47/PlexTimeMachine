@@ -38,8 +38,11 @@ gepflegte Playlist** aktualisieren. Keine neue Playlist pro Suche.
   „ungesehen“ setzen, um ihn von vorn zu schauen (zweistufige Rückfrage).
 - **Cover-Bilder** – jede Playlist (Zeitreise wie Almanach) bekommt auf Wunsch
   ein eigenes Poster in Plex.
+- **Sendeplätze** – jede Serie bekommt eine Uhrzeit, die über die Reihenfolge
+  innerhalb eines Tages entscheidet; Filme laufen immer zur Primetime.
 - **Übergangsclips** – optional erzeugte kurze Videos, die vor jedem Tag der
-  Zeitreise-Playlist das Datum umspringen lassen und zeigen, was gleich kommt.
+  Zeitreise-Playlist das Datum umspringen lassen und als „UP NEXT“-Tafel das
+  Tagesprogramm mit Uhrzeiten zeigen.
 - **Sammlungen gemeinsam nutzen** – ein Almanach lässt sich für weitere
   Home-User freigeben: ein Inhalt für alle, aber je Profil eine eigene Playlist
   mit dem eigenen Watch-Status.
@@ -266,16 +269,48 @@ Playlist selbst verschwindet dann ohnehin, weil Plex keine leere halten kann).
 Über `PTM_PLAYLIST_NAME_TEMPLATE` lässt sich das Muster ändern; verfügbar sind
 `{weekday}`, `{date}` und `{user}`.
 
+### Sendeplätze: die Reihenfolge eines Tages
+
+Innerhalb eines Tages entscheidet nicht das Alphabet, sondern das Programm:
+
+| | Sendeplatz |
+|---|---|
+| Serie ohne eigenen Platz | `10:00` |
+| Serie mit Platz | wie eingestellt |
+| Film | `20:15` – fest, das ist der Hauptfilm |
+
+In der Vorschau hat jede Serienzeile eine Spalte **Sendeplatz** mit einem
+Zeitfeld. Die Änderung wird sofort gespeichert, gilt **ab da für die ganze
+Serie** – auch in allen späteren Zeitreisen – und die Vorschau sortiert sich
+direkt neu. Ein leeres Feld setzt die Serie auf den Standard zurück.
+
+Der Platz gehört zur Serie, nicht zum Profil: er gilt für alle Reisenden, so
+wie ein Sendeplatz im Fernsehen für alle Zuschauer gilt.
+
+Zwei Feinheiten:
+
+- **Gleiche Uhrzeit** wird gewürfelt – aber fest: die Reihenfolge sieht
+  willkürlich aus, bleibt für denselben Tag aber über alle Läufe gleich. Sonst
+  würde die Playlist bei jedem Sync neu durchgemischt.
+- **Mehrere Folgen einer Serie am selben Tag** bleiben zusammen und in ihrer
+  Reihenfolge – ein Doppelfolgen-Abend läuft nicht verkehrt herum.
+
 ### Übergänge zwischen den Tagen
 
 Optional legt die Zeitreise vor jeden Tag einen kurzen, selbst gerenderten Clip
-in die Playlist: das Datum rollt vom vorherigen auf den nächsten Tag um, danach
-erscheint auf **einem** Bild, was an diesem Tag ansteht – Poster, `S02E05` und
-Episodentitel je Eintrag. Bei Serien wird bewusst das **Staffelposter**
-verwendet. Das Raster skaliert mit der Menge (1 bis 10 Kacheln); mehr Titel
-werden als „+3 weitere“ zusammengefasst. Tage ohne Treffer kommen nicht vor –
-der Roll springt direkt auf den nächsten Tag mit Inhalt, der erste Clip einer
-Woche startet am Beginn des gewählten Zeitraums.
+in die Playlist – im Look eines Senders (Fuchsbau Streaming: schwarz, orange,
+weiß):
+
+1. **Sendetag** – das Datum rollt wie ein Zählwerk vom vorherigen auf den
+   nächsten Tag mit Inhalt um.
+2. **UP NEXT** – das Tagesprogramm als Liste an einer Zeitachse: Poster,
+   `S02 • E03` bzw. `FILM`, Titel und rechts der **Sendeplatz**. Bei Serien wird
+   bewusst das **Staffelposter** verwendet.
+
+Die Liste skaliert mit der Menge (1 bis 10 Zeilen auf einem Bild); mehr Titel
+werden in der Fußzeile als „+3 weitere“ zusammengefasst. Tage ohne Treffer
+kommen nicht vor – der Roll springt direkt auf den nächsten Tag mit Inhalt, der
+erste Clip einer Woche startet am Beginn des gewählten Zeitraums.
 
 Die Clips sind stumme H.264-Dateien (mit leerer Tonspur, damit Plex sie sauber
 abspielt) und liegen als `Time Machine - Tuesday 25.08.2026 - Phil.mp4` im
@@ -411,6 +446,7 @@ app/
 ├── db.py            SQLModel/SQLite: UserState, BlacklistEntry, JourneyLog
 ├── plex_client.py   plexapi-Wrapper inkl. Home-User-Impersonation
 ├── sync_engine.py   Suche, Blacklist-Filter, Merge/Sort, Playlist-Pflege
+├── slots.py         Sendeplätze: Zeiten lesen, Tagesreihenfolge bestimmen
 ├── transitions.py   Rendert die Übergangsclips (Pillow + FFmpeg)
 ├── transition_build.py  Clips planen, bauen, Plex scannen, einweben
 ├── scheduler.py     APScheduler: Polling + entprellte Webhook-Syncs
@@ -425,7 +461,7 @@ app/
 3. Ergebnisse exakt auf den Zeitraum eingrenzen (Plex' Datumsfilter sind
    randscharf-exklusiv, deshalb serverseitig weiten und clientseitig prüfen)
 4. Blacklist anwenden: Filme über `ratingKey`, Episoden über `grandparentRatingKey`
-5. Chronologisch sortieren (Datum → Film vor Episode → Serie → Staffel/Folge)
+5. Sortieren: Tag → Sendeplatz → feste Zufallsreihenfolge → Staffel/Folge
 6. Vorhandene Übergangsclips vor den jeweils ersten Titel eines Tages setzen
    (nur wenn `PTM_TRANSITIONS_ENABLED` gesetzt ist)
 7. Feste Playlist leeren und in dieser Reihenfolge neu befüllen
@@ -458,6 +494,7 @@ ein Webhook-Event.
 | `POST` | `/period` | Zeitraum speichern, Vorschau-Fragment zurückgeben |
 | `GET` | `/preview` | Vorschau-Fragment ohne Speichern |
 | `POST` | `/blacklist/add`, `/blacklist/remove` | Blacklist pflegen |
+| `POST` | `/slot` | Sendeplatz einer Serie setzen (leer = Standard) |
 | `POST` | `/sync` | Zeitreise ausführen (Playlist schreiben) |
 | `POST` | `/user/select` | Home-User-Kontext wechseln (Cookie) |
 | `POST` | `/webhook/plex` | Plex-Webhook-Empfänger |
@@ -476,6 +513,8 @@ Leeren, Nachfüllen in Blöcken und dem Fall, dass Plex eine leer geräumte
 Playlist selbst entfernt), Wochenrechnung und Wochentagsanzeige, den Almanach
 (Titelsuche, Serien-Auflösung, Release-Order, fehlende Einträge), die Freigabe an andere
 Profile inklusive getrennter Watch-Stände, Cover-Prüfung und -Übertragung,
+die Sendeplätze (Zeiten lesen, Tagesreihenfolge, stabiler Zufall, Speicherung
+und Bedienung),
 die Übergangsclips (Raster, Laufzeit, Tagesgruppierung, Staffelposter und ein
 echter FFmpeg-Rendervorgang in 360p) sowie Scheduler-Entprellung und alle
 HTTP-Endpunkte gegen ein Plex-Double ab – ein echter Plex-Server wird dafür

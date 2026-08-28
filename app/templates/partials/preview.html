@@ -27,7 +27,7 @@
     <table>
       <thead>
         <tr>
-          <th></th><th>Titel</th><th>Erscheinungsdatum</th><th>Typ</th><th>Länge</th><th></th>
+          <th></th><th>Titel</th><th>Erscheinungsdatum</th><th>Sendeplatz</th><th>Typ</th><th>Länge</th><th></th>
         </tr>
       </thead>
       <tbody>
@@ -52,6 +52,21 @@
             {% endif %}
           </td>
           <td class="cell-date">{{ item.air_date_display }}</td>
+          <td class="cell-slot">
+            {% if item.slot_editable %}
+              <input type="time" class="slot-input" value="{{ item.slot_display }}"
+                     title="Sendeplatz von »{{ item.series_title }}« – gilt ab sofort für die ganze Serie"
+                     name="slot"
+                     hx-post="/slot"
+                     hx-target="#preview"
+                     hx-swap="innerHTML"
+                     hx-trigger="change"
+                     hx-include="#period-form"
+                     hx-vals='{{ {"rating_key": item.blacklist_key, "title": item.series_title}|tojson }}'>
+            {% else %}
+              <span class="slot-fixed" title="Filme laufen immer zur Primetime">{{ item.slot_display }}</span>
+            {% endif %}
+          </td>
           <td><span class="badge {{ item.media_type }}">{{ 'Serie' if item.is_episode else 'Film' }}</span></td>
           <td class="cell-sub">{% if item.duration_minutes %}{{ item.duration_minutes }} min{% else %}—{% endif %}</td>
           <td class="list-actions">

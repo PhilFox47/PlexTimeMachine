@@ -28,7 +28,7 @@ from fastapi.templating import Jinja2Templates
 from sqlmodel import Session
 from starlette.concurrency import run_in_threadpool
 
-from app import __version__, covers, db
+from app import __version__, covers, db, slots
 from app import almanach as almanach_lib
 from app.config import get_settings
 from app.formatting import format_date, format_datetime, format_period, week_of, weekday_short
@@ -391,6 +391,40 @@ async def blacklist_add(
     users, _ = await run_in_threadpool(load_users)
     user_id = resolve_user(request, users)
     db.add_to_blacklist(session, user_id, rating_key, media_type, title)
+
+    start_date, end_date, error = parse_period(start, end)
+    if error:
+        state = db.get_or_create_user_state(session, user_id)
+        start_date, end_date = state.current_date_start, state.current_date_end
+    if not (start_date and end_date):
+        return HTMLResponse("")
+    preview = await compute_preview(session, user_id, start_date, end_date)
+    return preview_response(request, preview)
+
+
+@app.post("/slot", response_class=HTMLResponse)
+async def set_slot(
+    request: Request,
+    rating_key: str = Form(...),
+    slot: str = Form(""),
+    title: str = Form(""),
+    start: str = Form(""),
+    end: str = Form(""),
+    session: Session = Depends(db.get_session),
+):
+    """Sendeplatz einer Serie setzen (leer = zurück auf den Standard).
+
+    Antwort ist die neu sortierte Vorschau – die Änderung ist also sofort in
+    der Reihenfolge zu sehen.
+    """
+    users, _ = await run_in_threadpool(load_users)
+    user_id = resolve_user(request, users)
+
+    sauber = slots.normalise(slot)
+    if sauber is None:
+        db.clear_slot(session, rating_key)
+    else:
+        db.set_slot(session, rating_key, sauber, title)
 
     start_date, end_date, error = parse_period(start, end)
     if error:

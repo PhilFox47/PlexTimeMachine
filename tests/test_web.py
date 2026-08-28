@@ -5,20 +5,8 @@ from __future__ import annotations
 import json
 
 import pytest
-from fastapi.testclient import TestClient
 
 from app import db
-from app.plex_client import set_gateway
-
-
-@pytest.fixture
-def client(gateway):
-    from app.main import app
-
-    set_gateway(gateway)
-    with TestClient(app) as test_client:
-        yield test_client
-    set_gateway(None)
 
 
 def test_dashboard_renders_time_circuits(client):

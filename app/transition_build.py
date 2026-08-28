@@ -101,6 +101,7 @@ def to_clip_item(server: Any, item: PreviewItem) -> ClipItem:
             title=item.title,
             season=item.season,
             episode=item.episode,
+            slot=item.slot_display,
             poster=poster,
         )
     return ClipItem(
@@ -108,6 +109,7 @@ def to_clip_item(server: Any, item: PreviewItem) -> ClipItem:
         show=item.title,
         title=item.title,
         year=item.year,
+        slot=item.slot_display,
         poster=fetch_image(server, item.thumb),
     )
 

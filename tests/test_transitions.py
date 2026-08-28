@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from app import db, transition_build, transitions
-from app.transitions import ClipItem, ClipSpec, grid_for
+from app.transitions import ClipItem, ClipSpec
 
 
 def ffmpeg_pfad() -> str | None:
@@ -28,12 +28,23 @@ def ffmpeg_pfad() -> str | None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "anzahl, erwartet",
-    [(1, (1, 1)), (2, (2, 1)), (4, (4, 1)), (6, (3, 2)), (7, (4, 2)), (10, (5, 2)), (25, (5, 2))],
-)
-def test_grid_covers_one_to_ten(anzahl, erwartet):
-    assert grid_for(anzahl) == erwartet
+@pytest.mark.parametrize("anzahl", [1, 2, 3, 5, 7, 10])
+def test_the_programme_fits_on_one_screen(anzahl):
+    """Egal ob ein Titel oder zehn: alles steht auf einer Tafel, ohne Überlauf."""
+    stage = transitions.Stage(360)
+    spec = ClipSpec("MONDAY", "24.08.2026", "TUESDAY", "25.08.2026",
+                    [ClipItem("movie", f"Film {i}", f"Film {i}", year=1985, slot="20:15")
+                     for i in range(anzahl)])
+
+    board = transitions.Board(stage, spec)
+
+    assert len(board.zeilen) == anzahl
+    assert board.positionen[0][1] >= stage.liste_oben - 1
+    unten = board.positionen[-1][1] + board.hoehe
+    assert unten <= stage.liste_unten + 1
+    # Die Zeilen überlappen sich nicht.
+    abstaende = [b[1] - a[1] for a, b in zip(board.positionen, board.positionen[1:])]
+    assert all(abstand >= board.hoehe for abstand in abstaende)
 
 
 def test_more_than_ten_titles_are_summarised():
@@ -74,7 +85,7 @@ def test_interleave_puts_the_clip_in_front_of_its_day(gateway):
 
     titel = [x if isinstance(x, str) else x.title for x in reihe]
     assert titel == [
-        "CLIP-A", "Brazil", "Showdown",
+        "CLIP-A", "Showdown", "Brazil",       # Serie um 10:00, Film um 20:15
         "Zurück in die Zukunft",              # 03.07. ohne Clip
         "CLIP-B", "Pilot", "Folge 2",
     ]
@@ -198,7 +209,7 @@ def test_broken_poster_data_falls_back_to_a_placeholder():
     """Ein kaputtes Bild darf den ganzen Clip nicht scheitern lassen."""
     item = ClipItem("movie", "Film", "Film", year=1985, poster=b"kein Bild")
 
-    bild = transitions._poster_image(item, (120, 180))
+    bild = transitions._poster(item, (120, 180))
 
     assert bild.size == (120, 180)
 
@@ -261,7 +272,7 @@ def test_clips_are_built_scanned_and_woven_into_the_playlist(
     playlist = gateway.server.playlists()[0]
     namen = [x.title for x in playlist.items()]
     assert namen[0].startswith("Time Machine - Friday 22.02.1985")
-    assert namen[1:3] == ["Brazil", "Showdown"]
+    assert namen[1:3] == ["Showdown", "Brazil"]
     assert namen[3].startswith("Time Machine - Wednesday 03.07.1985")
     assert namen[4] == "Zurück in die Zukunft"
     # Der 20.09. bekam wegen der Obergrenze keinen Clip – seine Titel bleiben trotzdem
@@ -297,7 +308,7 @@ def test_playlist_stays_intact_when_no_clips_exist(session, gateway, uebergaenge
     ergebnis = sync_user(session, "Alex", gateway=gateway)
 
     assert ergebnis.ok and ergebnis.item_count == 5
-    assert [x.title for x in gateway.server.playlists()[0].items()][0] == "Brazil"
+    assert [x.title for x in gateway.server.playlists()[0].items()][0] == "Showdown"
 
 
 def test_a_missing_library_does_not_break_the_sync(session, gateway, uebergaenge_an):
@@ -481,4 +492,4 @@ def test_invisible_clips_are_retried_before_the_playlist_is_built(
         set_gateway(None)
 
     namen = [x.title for x in gateway.server.playlists()[0].items()]
-    assert namen == ["Brazil", "Showdown", "Zurück in die Zukunft", "Pilot", "Folge 2"]
+    assert namen == ["Showdown", "Brazil", "Zurück in die Zukunft", "Pilot", "Folge 2"]

@@ -80,7 +80,7 @@ def run_transition_build(user_id: str) -> None:
         gateway = get_gateway()
         try:
             server = gateway.connect_as(user_id)
-            roh = collect_items(gateway, server, *periode)
+            roh = collect_items(gateway, server, *periode, db.all_slots(session))
             items, _ = apply_blacklist(roh, db.blacklist_keys(session, user_id))
             session.commit()
             log.info("Übergänge für %s werden gerendert …", user_id)

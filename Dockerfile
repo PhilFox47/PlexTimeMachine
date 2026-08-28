@@ -6,9 +6,10 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# ffmpeg kodiert die Übergangsclips, fonts-dejavu liefert die Schriften dafür.
+# ffmpeg kodiert die Übergangsclips, die Schriftpakete liefern die Typografie
+# dafür (Liberation bevorzugt, DejaVu als Rückfall).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core \
+    && apt-get install -y --no-install-recommends ffmpeg fonts-liberation fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
