@@ -133,6 +133,7 @@ Alle Einstellungen kommen aus Umgebungsvariablen mit dem Präfix `PTM_`
 | `PTM_TRANSITION_USER` | `Zeitreisende Ente` | Nur dieses Profil bekommt Clips (leer = alle) |
 | `PTM_TRANSITION_SCAN_DELAY_SECONDS` | `300` | Pause nach dem Rendern, bevor Plex eingelesen wird |
 | `PTM_TRANSITION_HEIGHT` | `1080` | Auflösung der Clips (`720` rendert etwa dreimal schneller) |
+| `PTM_TRANSITION_SOUND` | – | Klang unter der Datumsrolle: leer = mitgelieferter Chime, `off` = stumm, sonst ein Pfad |
 | `PTM_FFMPEG_BINARY` | `ffmpeg` | Pfad zum FFmpeg-Binary (im Docker-Image enthalten) |
 
 Die Playlist enthält immer **alle** Treffer – das Limit betrifft nur die Anzeige.
@@ -302,15 +303,27 @@ in die Playlist – im Look eines Senders (Fuchsbau Streaming: schwarz, orange,
 weiß):
 
 1. **Sendetag** – das Datum rollt wie ein Zählwerk vom vorherigen auf den
-   nächsten Tag mit Inhalt um.
+   nächsten Tag mit Inhalt um. Diese Szene behält bewusst die Cockpit-Optik der
+   Oberfläche (Bernstein auf Schwarz) und ist mit einem Chime unterlegt.
 2. **UP NEXT** – das Tagesprogramm als Liste an einer Zeitachse: Poster,
    `S02 • E03` bzw. `FILM`, Titel und rechts der **Sendeplatz**. Bei Serien wird
    bewusst das **Staffelposter** verwendet.
 
-Die Liste skaliert mit der Menge (1 bis 10 Zeilen auf einem Bild); mehr Titel
-werden in der Fußzeile als „+3 weitere“ zusammengefasst. Tage ohne Treffer
-kommen nicht vor – der Roll springt direkt auf den nächsten Tag mit Inhalt, der
-erste Clip einer Woche startet am Beginn des gewählten Zeitraums.
+Fünf Zeilen stehen gleichzeitig auf der Tafel. Sind es mehr, **scrollt die
+Liste** in einem Zug durch, bis der letzte Titel des Tages zu sehen war – der
+Clip wird dabei entsprechend länger (rund 0,85 Sekunden je zusätzliche Zeile).
+Ab 24 Titeln macht die Fußzeile mit „+3 weitere“ Schluss.
+
+Tage ohne Treffer kommen nicht vor – der Roll springt direkt auf den nächsten
+Tag mit Inhalt, der erste Clip einer Woche startet am Beginn des gewählten
+Zeitraums.
+
+**Ton:** Unter der Datumsrolle liegt der mitgelieferte Chime
+(`app/assets/transition_chime.aac`, knapp neun Sekunden). Ist der Clip länger,
+wird mit Stille aufgefüllt; ist er kürzer, endet der Klang mit dem Bild. Eine
+eigene Datei kommt über `PTM_TRANSITION_SOUND`, `off` schaltet den Ton ab –
+eine (stille) Tonspur bleibt trotzdem drin, weil manche Plex-Clients über
+Videos ganz ohne Audio stolpern.
 
 Die Clips sind stumme H.264-Dateien (mit leerer Tonspur, damit Plex sie sauber
 abspielt) und liegen als `Time Machine - Tuesday 25.08.2026 - Phil.mp4` im
@@ -448,6 +461,7 @@ app/
 ├── sync_engine.py   Suche, Blacklist-Filter, Merge/Sort, Playlist-Pflege
 ├── slots.py         Sendeplätze: Zeiten lesen, Tagesreihenfolge bestimmen
 ├── transitions.py   Rendert die Übergangsclips (Pillow + FFmpeg)
+├── assets/          Der Chime unter der Datumsrolle
 ├── transition_build.py  Clips planen, bauen, Plex scannen, einweben
 ├── scheduler.py     APScheduler: Polling + entprellte Webhook-Syncs
 ├── templates/       Jinja2 (dashboard, blacklist, logbook, partials)
@@ -515,8 +529,8 @@ Playlist selbst entfernt), Wochenrechnung und Wochentagsanzeige, den Almanach
 Profile inklusive getrennter Watch-Stände, Cover-Prüfung und -Übertragung,
 die Sendeplätze (Zeiten lesen, Tagesreihenfolge, stabiler Zufall, Speicherung
 und Bedienung),
-die Übergangsclips (Raster, Laufzeit, Tagesgruppierung, Staffelposter und ein
-echter FFmpeg-Rendervorgang in 360p) sowie Scheduler-Entprellung und alle
+die Übergangsclips (Zeilenlayout, Scrollen langer Tage, Laufzeit, Tonspur,
+Tagesgruppierung, Staffelposter und echte FFmpeg-Rendervorgänge in 360p) sowie Scheduler-Entprellung und alle
 HTTP-Endpunkte gegen ein Plex-Double ab – ein echter Plex-Server wird dafür
 nicht gebraucht.
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import io
 import logging
+import math
 import shutil
 import subprocess
 import tempfile
@@ -19,14 +20,25 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Sequence
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 log = logging.getLogger(__name__)
 
 FPS = 24
 
-#: Mehr als das passt nicht lesbar auf eine Tafel.
-MAX_ROWS = 10
+#: So viele Zeilen stehen gleichzeitig auf der Tafel – der Rest scrollt nach.
+VISIBLE_ROWS = 5
+
+#: Irgendwo ist Schluss: darüber hinaus wird in der Fußzeile zusammengefasst.
+MAX_ROWS = 24
+
+#: Länge der einzelnen Abschnitte in Sekunden.
+ROLLOVER_SECONDS = 3.6
+FADE_SECONDS = 0.4
+OUTRO_SECONDS = 1.0
+
+#: Der mitgelieferte Klang unter der Datumsrolle.
+DEFAULT_SOUND = Path(__file__).resolve().parent / "assets" / "transition_chime.aac"
 
 SENDER = "FUCHSBAU"
 SENDER_2 = "STREAMING"
@@ -42,6 +54,15 @@ ORANGE_HELL = (242, 160, 7)
 ORANGE_TIEF = (206, 84, 12)
 WEISS = (255, 255, 255)
 GRAU = (154, 154, 154)
+
+# --- Farben der Datumsrolle (Cockpit-Optik, wie in der ersten Fassung) -----
+LED_BG = (11, 13, 16)
+AMBER = (255, 176, 32)
+AMBER_DIM = (138, 95, 18)
+TEAL = (41, 215, 200)
+RED = (255, 77, 67)
+LED_TEXT = (232, 228, 218)
+LED_DIM = (142, 146, 153)
 
 _FONT_DIRS = (
     "/usr/share/fonts/truetype/liberation",
@@ -80,6 +101,14 @@ def _sans_schmal() -> str:
     return _font_file(
         "LiberationSansNarrow-Bold.ttf", "LiberationSans-Bold.ttf", "DejaVuSans-Bold.ttf"
     )
+
+
+def _mono() -> str:
+    return _font_file("DejaVuSansMono.ttf", "LiberationMono-Regular.ttf")
+
+
+def _mono_bold() -> str:
+    return _font_file("DejaVuSansMono-Bold.ttf", "LiberationMono-Bold.ttf")
 
 
 # ---------------------------------------------------------------------------
@@ -458,8 +487,20 @@ def _row(stage: Stage, item: ClipItem, size: tuple[int, int]) -> Image.Image:
     return karte
 
 
+def board_duration(item_count: int) -> float:
+    """Wie lange die Tafel steht.
+
+    Bis zu fünf Zeilen stehen einfach da; alles darüber scrollt gemächlich
+    durch, damit auch ein voller Tag lesbar bleibt.
+    """
+    sichtbar = min(item_count, VISIBLE_ROWS)
+    verweilen = 2.0 + 0.45 * sichtbar
+    ueberhang = max(0, min(item_count, MAX_ROWS) - VISIBLE_ROWS)
+    return verweilen + (ueberhang * 0.85 + 1.2 if ueberhang else 0.0)
+
+
 class Board:
-    """Die „UP NEXT"-Tafel: Zeilen einmal bauen, dann nur noch einblenden."""
+    """Die „UP NEXT"-Tafel: Zeilen einmal bauen, dann einblenden und scrollen."""
 
     def __init__(self, stage: Stage, spec: ClipSpec):
         self.stage = stage
@@ -467,137 +508,228 @@ class Board:
         items = spec.shown or []
         n = max(1, len(items))
 
-        spanne = stage.liste_unten - stage.liste_oben
-        luecke = 0.013 * stage.h
-        hoehe = min(0.152 * stage.h, (spanne - (n - 1) * luecke) / n)
-        block = n * hoehe + (n - 1) * luecke
-        oben = stage.liste_oben + (spanne - block) / 2
+        self.hoehe = int(0.152 * stage.h)     # feste Zeilenhöhe – Zeilen scrollen
+        schritt = self.hoehe + int(0.013 * stage.h)
+        gesamt = (n - 1) * schritt + self.hoehe
+
+        # Ausschnitt: Zeitachse plus Karten. Alles darin wird beschnitten,
+        # angeschnittene Zeilen enden also sauber am Rand.
+        self.punkt = int(0.0095 * stage.h)
+        self.fenster_x = int(stage.linie_x - self.punkt - 2)
+        self.fenster_y = int(stage.liste_oben)
+        self.fenster_w = int(stage.karte_x1) - self.fenster_x
+        self.fenster_h = int(stage.liste_unten - stage.liste_oben)
+
+        self.max_scroll = max(0, gesamt - self.fenster_h)
+        oben = 0 if self.max_scroll else int((self.fenster_h - gesamt) / 2)
 
         self.breite = int(stage.karte_x1 - stage.karte_x0)
-        self.hoehe = int(hoehe)
-        self.positionen = [
-            (int(stage.karte_x0), int(oben + k * (hoehe + luecke))) for k in range(n)
-        ]
+        self.karte_x = int(stage.karte_x0) - self.fenster_x
+        self.linie_x = int(stage.linie_x) - self.fenster_x
+        self.positionen = [oben + k * schritt for k in range(n)]
         self.zeilen = [_row(stage, item, (self.breite, self.hoehe)) for item in items]
 
         self.static = stage.base()
         stage.label(self.static, "UP NEXT")
         stage.footer(self.static, spec.extra)
         self.leer = stage.base()
+        # Weiche Kanten nur dort, wo die Liste wirklich weitergeht.
+        self.saum_oben = self._saum(True) if self.max_scroll else None
+        self.saum_unten = self._saum(False) if self.max_scroll else None
+
+    def _saum(self, oben: bool) -> Image.Image:
+        """Auslaufende Kante – sonst reißen durchscrollende Zeilen hart ab."""
+        maske = Image.new("L", (self.fenster_w, self.fenster_h), 255)
+        d = ImageDraw.Draw(maske)
+        tiefe = max(4, int(self.fenster_h * 0.05))
+        for k in range(tiefe):
+            y = k if oben else self.fenster_h - 1 - k
+            d.line([(0, y), (self.fenster_w, y)], fill=int(255 * k / tiefe))
+        return maske
+
+    # -- Ablauf ------------------------------------------------------------
+
+    def scroll_at(self, sekunden: float, dauer: float) -> float:
+        """Wie weit die Liste zu diesem Zeitpunkt nach oben gewandert ist."""
+        if not self.max_scroll:
+            return 0.0
+        beginn = 2.0 + 0.45 * VISIBLE_ROWS       # erst lesen lassen
+        ende = max(beginn + 0.5, dauer - 1.0)    # unten kurz stehen bleiben
+        return self.max_scroll * _ease((sekunden - beginn) / (ende - beginn))
 
     def frame(self, i: int, n: int) -> Image.Image:
+        dauer = max(n, 1) / FPS
+        sekunden = i / FPS
         t = i / max(n - 1, 1)
-        auftritt = _ease(t / 0.18) if t < 0.18 else 1.0
+
+        auftritt = _ease(sekunden / 0.45) if sekunden < 0.45 else 1.0
         img = (Image.blend(self.leer, self.static, auftritt)
                if auftritt < 1 else self.static.copy())
 
-        d = ImageDraw.Draw(img)
-        auftritte = [_ease((t - 0.06 - k * 0.045) / 0.22) for k in range(len(self.zeilen))]
+        schicht = Image.new("RGBA", (self.fenster_w, self.fenster_h), (0, 0, 0, 0))
+        d = ImageDraw.Draw(schicht)
+        scroll = self.scroll_at(sekunden, dauer)
 
-        # Die Linie wächst genau so schnell, wie die Zeilen erscheinen – sie
-        # hängt also nie ins Leere.
-        oben = self.positionen[0][1]
+        auftritte = [_ease((sekunden - 0.25 - k * 0.16) / 0.5) for k in range(len(self.zeilen))]
+
+        # Die Zeitachse wächst mit den Zeilen und wandert danach mit ihnen.
+        oben = self.positionen[0] - scroll
         unten = oben
         for k, ein in enumerate(auftritte):
             if ein <= 0:
                 break
-            unten = self.positionen[k][1] + self.hoehe * min(1.0, ein)
+            unten = self.positionen[k] - scroll + self.hoehe * min(1.0, ein)
         if unten > oben:
             d.rectangle(
-                [self.stage.linie_x, oben,
-                 self.stage.linie_x + max(2, self.stage.h // 480), unten],
+                [self.linie_x, max(0, oben),
+                 self.linie_x + max(2, self.stage.h // 480), min(self.fenster_h, unten)],
                 fill=ORANGE,
             )
 
-        for k, (zeile, (x, y)) in enumerate(zip(self.zeilen, self.positionen)):
+        for k, zeile in enumerate(self.zeilen):
             ein = auftritte[k]
             if ein <= 0:
                 continue
+            y = int(self.positionen[k] - scroll)
+            if y > self.fenster_h or y + self.hoehe < 0:
+                continue
             versatz = int(0.035 * self.stage.w * (1 - ein))
             if ein >= 1:
-                img.paste(zeile, (x, y), zeile)
+                schicht.alpha_composite(zeile, (self.karte_x, y))
             else:
                 weich = zeile.copy()
                 weich.putalpha(zeile.getchannel("A").point(lambda v: int(v * ein)))
-                img.paste(weich, (x + versatz, y), weich)
+                schicht.alpha_composite(weich, (self.karte_x + versatz, y))
 
-            punkt = int(0.0085 * self.stage.h * min(1.0, ein * 1.4))
+            r = int(self.punkt * min(1.0, ein * 1.4))
             mitte = y + self.hoehe / 2
-            d.ellipse(
-                [self.stage.linie_x - punkt + 1, mitte - punkt,
-                 self.stage.linie_x + punkt + 1, mitte + punkt],
-                fill=ORANGE,
-            )
+            d.ellipse([self.linie_x - r + 1, mitte - r, self.linie_x + r + 1, mitte + r],
+                      fill=ORANGE)
+
+        if self.max_scroll:
+            kanal = schicht.getchannel("A")
+            if scroll > 0.5:                       # oben geht es weiter
+                kanal = ImageChops.multiply(kanal, self.saum_oben)
+            if scroll < self.max_scroll - 0.5:     # unten kommt noch etwas
+                kanal = ImageChops.multiply(kanal, self.saum_unten)
+            schicht.putalpha(kanal)
+        img.paste(schicht, (self.fenster_x, self.fenster_y), schicht)
         return img
 
 
 # ---------------------------------------------------------------------------
-# Datumsrolle
+# Datumsrolle – bewusst in der ursprünglichen Cockpit-Optik
 # ---------------------------------------------------------------------------
 
 
-def _odometer(stage: Stage, alt: str, neu: str, fortschritt: float) -> Image.Image:
-    """Die Ziffern rollen spaltenweise um – jede Spalte sauber beschnitten."""
-    f = stage.f_datum
-    zellen: list[Image.Image] = []
-    hoehe = int(f.size * 1.34)
+class LedCanvas:
+    """Bernstein-LED auf Schwarz: die Bühne der Datumsrolle.
 
-    for spalte, (a, b) in enumerate(zip(alt.ljust(len(neu))[: len(neu)], neu)):
-        breite = int(f.getlength(b) + f.size * 0.06)
-        zelle = Image.new("RGBA", (breite, hoehe), (0, 0, 0, 0))
-        d = ImageDraw.Draw(zelle)
-        p = _ease(min(1.0, max(0.0, fortschritt * 1.45 - spalte * 0.05)))
-        mitte = hoehe / 2
-        if a == b or not a.strip():
-            d.text((breite / 2, mitte), b, font=f, fill=ORANGE_HELL, anchor="mm")
-        else:
-            hub = hoehe
-            d.text((breite / 2, mitte - hub * p), a, font=f,
-                   fill=tuple(int(v * (1 - p * 0.5)) for v in ORANGE_HELL), anchor="mm")
-            d.text((breite / 2, mitte + hub * (1 - p)), b, font=f,
-                   fill=tuple(int(v * (0.5 + 0.5 * p)) for v in ORANGE_HELL), anchor="mm")
-        zellen.append(zelle)
+    Sie hat ihre eigene Handschrift und bleibt deshalb unverändert, während die
+    Programmtafel im Senderlook gestaltet ist.
+    """
 
-    gesamt = sum(z.width for z in zellen)
-    band = Image.new("RGBA", (gesamt, hoehe), (0, 0, 0, 0))
-    x = 0
-    for zelle in zellen:
-        band.paste(zelle, (x, 0), zelle)
-        x += zelle.width
-    return band
+    def __init__(self, height: int = 1080):
+        self.h = int(height)
+        self.w = int(round(self.h * 16 / 9))
+        s = self.h / 1080
+        self.s = s
+
+        mono, mono_b = _mono(), _mono_bold()
+        self.f_caption = _font(mono, 26 * s)
+        self.f_label = _font(mono, 30 * s)
+        self.f_digit = _font(mono_b, 150 * s)
+        self.f_weekday = _font(mono_b, 74 * s)
+        self.background = self._background()
+
+    def _background(self) -> Image.Image:
+        img = Image.new("RGB", (self.w, self.h), LED_BG)
+        d = ImageDraw.Draw(img)
+        for y in range(self.h):
+            f = y / self.h
+            d.line(
+                [(0, y), (self.w, y)],
+                fill=(int(11 + 16 * (1 - f)), int(13 + 20 * (1 - f)), int(16 + 26 * (1 - f))),
+            )
+        for y in range(0, self.h, max(2, int(4 * self.s))):
+            d.line([(0, y), (self.w, y)], fill=(0, 0, 0))
+        vignette = Image.new("L", (self.w, self.h), 0)
+        ImageDraw.Draw(vignette).ellipse(
+            [-self.w // 3, -self.h // 3, self.w + self.w // 3, self.h + self.h // 3], fill=255
+        )
+        vignette = vignette.filter(ImageFilter.GaussianBlur(int(220 * self.s)))
+        return Image.composite(img, Image.new("RGB", (self.w, self.h), (0, 0, 0)), vignette)
+
+    def glow(self, target, xy, text, font, color, blur=18, alpha=255, anchor="mm") -> None:
+        """Text mit Leuchten. Nur der Textbereich wird geweichzeichnet – sonst
+        kostet jedes Einzelbild ein Vielfaches."""
+        if alpha <= 0 or not text:
+            return
+        blur = max(2, int(blur * self.s))
+        mask = Image.new("L", (self.w, self.h), 0)
+        ImageDraw.Draw(mask).text(xy, text, font=font, fill=255, anchor=anchor)
+        box = mask.getbbox()
+        if box is None:
+            return
+        pad = blur * 3
+        box = (
+            max(0, box[0] - pad),
+            max(0, box[1] - pad),
+            min(self.w, box[2] + pad),
+            min(self.h, box[3] + pad),
+        )
+        cut = mask.crop(box)
+        feld = Image.new("RGB", cut.size, color)
+        target.paste(feld, box[:2], cut.filter(ImageFilter.GaussianBlur(blur)).point(
+            lambda v: int(v * 0.85 * alpha / 255)))
+        target.paste(feld, box[:2], cut.point(lambda v: int(v * alpha / 255)))
 
 
-def _scene_date(stage: Stage, spec: ClipSpec, i: int, n: int) -> Image.Image:
-    """Das Datum rollt vom Vortag auf den kommenden Sendetag."""
+def _scene_rollover(c: LedCanvas, spec: ClipSpec, i: int, n: int) -> Image.Image:
+    """Das Datum rollt wie ein Zählwerk um."""
+    img = c.background.copy()
     t = i / max(n - 1, 1)
-    roll = 0.0 if t < 0.28 else (1.0 if t > 0.64 else _ease((t - 0.28) / 0.36))
+    roll = 0.0 if t < 0.30 else (1.0 if t > 0.62 else _ease((t - 0.30) / 0.32))
+    s = c.s
 
-    img = stage.base()
-    stage.label(img, "SENDETAG")
-    d = ImageDraw.Draw(img)
+    c.glow(img, (c.w // 2, int(150 * s)), "PLEX TIME MACHINE", c.f_caption, AMBER_DIM, 8)
+    d = ImageDraw.Draw(img, "RGBA")
+    d.rounded_rectangle(
+        (c.w // 2 - int(700 * s), int(300 * s), c.w // 2 + int(700 * s), int(760 * s)),
+        int(10 * s), fill=(7, 9, 12, 235), outline=AMBER_DIM + (170,), width=2,
+    )
+    c.glow(img, (c.w // 2, int(360 * s)), "DESTINATION DAY", c.f_label, LED_DIM, 6)
 
-    x = stage.karte_x0
-    y_wochentag = 0.40 * stage.h
-    # Nacheinander statt übereinander: der alte Tag ist weg, bevor der neue kommt.
-    alt_alpha = max(0.0, 1 - roll * 2)
-    neu_alpha = max(0.0, roll * 2 - 1)
-    if alt_alpha > 0:
-        _track(d, (x, y_wochentag), spec.prev_weekday.upper(), stage.f_wochentag,
-               tuple(int(v * alt_alpha) for v in GRAU), 0.09 * stage.f_wochentag.size, "lm")
-    if neu_alpha > 0:
-        _track(d, (x, y_wochentag), spec.weekday.upper(), stage.f_wochentag,
-               tuple(int(v * neu_alpha) for v in WEISS), 0.09 * stage.f_wochentag.size, "lm")
+    if roll < 1:
+        c.glow(img, (c.w // 2, int(460 * s)), spec.prev_weekday, c.f_weekday, RED, 14,
+               int(255 * (1 - roll)))
+    if roll > 0:
+        c.glow(img, (c.w // 2, int(460 * s)), spec.weekday, c.f_weekday, AMBER, 18,
+               int(255 * roll))
 
-    d.rectangle([x, 0.455 * stage.h, x + 0.075 * stage.w, 0.455 * stage.h + 0.0065 * stage.h],
-                fill=ORANGE)
+    zelle = c.f_digit.getlength("0")
+    start = c.w // 2 - (len(spec.date) * zelle) / 2
+    hub = 130 * s
+    for spalte, (alt_z, neu_z) in enumerate(zip(spec.prev_date.ljust(len(spec.date)), spec.date)):
+        x = start + spalte * zelle + zelle / 2
+        if alt_z == neu_z:
+            c.glow(img, (x, int(620 * s)), neu_z, c.f_digit, AMBER, 22)
+            continue
+        p = _ease(min(1.0, max(0.0, roll * 1.5 - spalte * 0.06)))
+        if p < 1:
+            c.glow(img, (x, int(620 * s) - hub * p), alt_z, c.f_digit, AMBER, 22,
+                   int(255 * (1 - p)))
+        if p > 0:
+            c.glow(img, (x, int(620 * s) + hub * (1 - p)), neu_z, c.f_digit, AMBER, 22,
+                   int(255 * p))
 
-    band = _odometer(stage, spec.prev_date, spec.date, roll)
-    img.paste(band, (int(x), int(0.52 * stage.h)), band)
-
-    if spec.items:
-        vorschau = f"{len(spec.items)} TITEL IM PROGRAMM"
-        _track(d, (x, 0.79 * stage.h), vorschau, stage.f_fuss, GRAU,
-               0.11 * stage.f_fuss.size, "lm")
+    if 0.44 < t < 0.56:  # Flux-Moment
+        staerke = 1 - abs(t - 0.50) / 0.06
+        img = Image.blend(img, Image.new("RGB", (c.w, c.h), TEAL), 0.18 * staerke)
+        d = ImageDraw.Draw(img, "RGBA")
+        for k in range(6):
+            y = int((300 + k * 90) * s + 30 * s * math.sin(t * 40 + k))
+            d.line([(0, y), (c.w, y)], fill=TEAL + (int(70 * staerke),), width=2)
     return img
 
 
@@ -608,7 +740,22 @@ def _scene_date(stage: Stage, spec: ClipSpec, i: int, n: int) -> Image.Image:
 
 def clip_duration(item_count: int) -> float:
     """Länge in Sekunden – die Tafel steht länger, wenn mehr zu lesen ist."""
-    return 3.6 + min(7.0, 3.0 + 0.35 * min(item_count, MAX_ROWS)) + 1.0
+    return ROLLOVER_SECONDS + FADE_SECONDS + board_duration(item_count) + OUTRO_SECONDS
+
+
+def sound_file(sound: Optional[str]) -> Optional[Path]:
+    """Welcher Klang unter den Clip gelegt wird.
+
+    Leer heißt „der mitgelieferte", ``off`` heißt stumm, alles andere ist ein
+    Pfad. Fehlt die Datei, wird der Clip trotzdem erzeugt – nur eben still.
+    """
+    if sound and sound.strip().lower() in {"off", "aus", "none", "-"}:
+        return None
+    pfad = Path(sound.strip()) if sound and sound.strip() else DEFAULT_SOUND
+    if not pfad.exists():
+        log.warning("Klangdatei %s fehlt – der Übergang bleibt stumm", pfad)
+        return None
+    return pfad
 
 
 def render_clip(
@@ -616,14 +763,16 @@ def render_clip(
     target: Path,
     height: int = 1080,
     ffmpeg: str = "ffmpeg",
+    sound: Optional[str] = None,
 ) -> Path:
-    """Einen Übergang als MP4 schreiben (H.264, mit stiller Tonspur).
+    """Einen Übergang als MP4 schreiben (H.264, mit Tonspur).
 
-    Die stille Tonspur ist Absicht: manche Plex-Clients stolpern über Videos
-    ganz ohne Audio.
+    Auch ohne Klangdatei bekommt der Clip eine stille Tonspur: manche
+    Plex-Clients stolpern über Videos ganz ohne Audio.
     """
     stage = Stage(height)
     board = Board(stage, spec)
+    leinwand = LedCanvas(height)
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     ordner = Path(tempfile.mkdtemp(prefix="ptm-clip-"))
@@ -635,27 +784,43 @@ def render_clip(
             bild.save(ordner / f"{nummer:05d}.png")
             nummer += 1
 
-        frames_date = int(3.6 * FPS)
-        for i in range(frames_date):
-            schreibe(_scene_date(stage, spec, i, frames_date))
+        frames_roll = int(ROLLOVER_SECONDS * FPS)
+        letzte_rolle = None
+        for i in range(frames_roll):
+            letzte_rolle = _scene_rollover(leinwand, spec, i, frames_roll)
+            schreibe(letzte_rolle)
 
-        hold = int(min(7.0, 3.0 + 0.35 * len(spec.shown)) * FPS)
-        letztes = None
-        for i in range(hold):
-            letztes = board.frame(i, hold)
-            schreibe(letztes)
+        frames_tafel = int(board_duration(len(spec.shown)) * FPS)
+        # Weicher Übergang von der Rolle auf die Tafel – kein harter Schnitt.
+        frames_fade = int(FADE_SECONDS * FPS)
+        erste_tafel = board.frame(0, frames_tafel)
+        for i in range(frames_fade):
+            schreibe(Image.blend(letzte_rolle, erste_tafel, _ease((i + 1) / frames_fade)))
+
+        letzte_tafel = erste_tafel
+        for i in range(frames_tafel):
+            letzte_tafel = board.frame(i, frames_tafel)
+            schreibe(letzte_tafel)
 
         schwarz = Image.new("RGB", (stage.w, stage.h), BLACK)
-        outro = int(1.0 * FPS)
+        outro = int(OUTRO_SECONDS * FPS)
         for i in range(outro):
-            schreibe(Image.blend(letztes or schwarz, schwarz, _ease(i / max(outro - 1, 1))))
+            schreibe(Image.blend(letzte_tafel, schwarz, _ease(i / max(outro - 1, 1))))
 
-        befehl = [
-            ffmpeg, "-y", "-loglevel", "error",
-            "-framerate", str(FPS), "-i", str(ordner / "%05d.png"),
-            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
-            "-shortest", "-c:v", "libx264", "-preset", "medium", "-crf", "20",
-            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k", str(target),
+        klang = sound_file(sound)
+        laenge = nummer / FPS
+        befehl = [ffmpeg, "-y", "-loglevel", "error",
+                  "-framerate", str(FPS), "-i", str(ordner / "%05d.png")]
+        if klang is None:
+            befehl += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
+        else:
+            # apad hängt Stille an, damit auch ein kürzerer Klang bis zum Ende
+            # reicht; die genaue Länge setzt -t, sonst liefe die Stille weiter.
+            befehl += ["-i", str(klang), "-af", "apad"]
+        befehl += [
+            "-t", f"{laenge:.3f}",
+            "-c:v", "libx264", "-preset", "medium", "-crf", "20",
+            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", str(target),
         ]
         ergebnis = subprocess.run(befehl, capture_output=True, text=True)
         if ergebnis.returncode != 0 or not target.exists():

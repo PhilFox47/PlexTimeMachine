@@ -28,35 +28,68 @@ def ffmpeg_pfad() -> str | None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("anzahl", [1, 2, 3, 5, 7, 10])
-def test_the_programme_fits_on_one_screen(anzahl):
-    """Egal ob ein Titel oder zehn: alles steht auf einer Tafel, ohne Überlauf."""
-    stage = transitions.Stage(360)
+def _tafel(anzahl: int, hoehe: int = 360):
+    stage = transitions.Stage(hoehe)
     spec = ClipSpec("MONDAY", "24.08.2026", "TUESDAY", "25.08.2026",
                     [ClipItem("movie", f"Film {i}", f"Film {i}", year=1985, slot="20:15")
                      for i in range(anzahl)])
+    return stage, transitions.Board(stage, spec)
 
-    board = transitions.Board(stage, spec)
+
+@pytest.mark.parametrize("anzahl", [1, 2, 3, 5])
+def test_up_to_five_titles_stand_still(anzahl):
+    """Was auf die Tafel passt, wird nicht bewegt."""
+    _, board = _tafel(anzahl)
 
     assert len(board.zeilen) == anzahl
-    assert board.positionen[0][1] >= stage.liste_oben - 1
-    unten = board.positionen[-1][1] + board.hoehe
-    assert unten <= stage.liste_unten + 1
-    # Die Zeilen überlappen sich nicht.
-    abstaende = [b[1] - a[1] for a, b in zip(board.positionen, board.positionen[1:])]
-    assert all(abstand >= board.hoehe for abstand in abstaende)
+    assert board.max_scroll == 0
+    assert board.positionen[0] >= 0
+    assert board.positionen[-1] + board.hoehe <= board.fenster_h + 1
 
 
-def test_more_than_ten_titles_are_summarised():
+@pytest.mark.parametrize("anzahl", [6, 9, 14, 24])
+def test_longer_days_scroll_until_the_last_title_was_shown(anzahl):
+    """Alles darüber scrollt – und zwar genau so weit, dass nichts fehlt."""
+    _, board = _tafel(anzahl)
+    dauer = transitions.board_duration(anzahl)
+
+    assert board.max_scroll > 0
+    assert board.scroll_at(0.0, dauer) == 0                        # erst stehen
+    # Am Ende steht die letzte Zeile vollständig im Fenster.
+    letzte = board.positionen[-1] - board.scroll_at(dauer, dauer) + board.hoehe
+    assert letzte == pytest.approx(board.fenster_h, abs=2)
+    # Die Zeilenhöhe bleibt dieselbe wie bei einer kurzen Liste.
+    assert board.hoehe == _tafel(3)[1].hoehe
+
+
+def test_the_scroll_only_starts_after_the_first_titles_were_read():
+    _, board = _tafel(10)
+    dauer = transitions.board_duration(10)
+
+    assert board.scroll_at(2.0, dauer) == 0
+    mitte = board.scroll_at(dauer / 2, dauer)
+    assert 0 < mitte < board.max_scroll
+    assert board.scroll_at(dauer - 0.9, dauer) == pytest.approx(board.max_scroll, abs=2)
+
+
+def test_very_long_days_are_summarised():
     spec = ClipSpec("MONDAY", "24.08.2026", "TUESDAY", "25.08.2026",
-                    [ClipItem("movie", f"Film {i}", f"Film {i}", year=1985) for i in range(14)])
+                    [ClipItem("movie", f"Film {i}", f"Film {i}", year=1985) for i in range(30)])
 
-    assert len(spec.shown) == 10 and spec.extra == 4
+    assert len(spec.shown) == transitions.MAX_ROWS == 24
+    assert spec.extra == 6
 
 
-def test_duration_grows_with_the_number_of_titles():
-    assert transitions.clip_duration(1) < transitions.clip_duration(10)
-    assert transitions.clip_duration(10) == pytest.approx(11.1, abs=0.1)
+def test_duration_follows_the_number_of_titles():
+    kurz = transitions.clip_duration(1)
+    voll = transitions.clip_duration(5)
+
+    assert kurz < voll
+    # Bis fünf Titel bleibt der Clip in der Länge des Klangs (rund neun Sekunden).
+    assert voll == pytest.approx(9.25, abs=0.3)
+    # Danach wächst er gleichmäßig mit jeder weiteren Zeile.
+    schritte = [transitions.clip_duration(n) for n in (6, 7, 8)]
+    assert all(b - a == pytest.approx(0.85, abs=0.01) for a, b in zip(schritte, schritte[1:]))
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +226,62 @@ def test_render_produces_a_playable_clip(tmp_path):
         [ffmpeg_pfad(), "-hide_banner", "-i", str(ziel)], capture_output=True, text=True
     ).stderr
     assert "Video: h264" in beschreibung        # von Plex-Clients gut verdaut
-    assert "Audio: aac" in beschreibung         # stille Tonspur, sonst stolpern manche
+    assert "Audio: aac" in beschreibung         # ohne Tonspur stolpern manche Clients
+
+
+def test_the_chime_ships_with_the_app():
+    """Ohne die Datei bliebe jeder Übergang stumm – sie gehört ins Image."""
+    assert transitions.DEFAULT_SOUND.exists()
+    assert transitions.sound_file(None) == transitions.DEFAULT_SOUND
+    assert transitions.sound_file("") == transitions.DEFAULT_SOUND
+    assert transitions.sound_file("off") is None
+    assert transitions.sound_file("/gibt/es/nicht.aac") is None    # still statt Absturz
+
+
+def _dauer(pfad) -> float:
+    """Länge einer Videodatei in Sekunden, laut FFmpeg."""
+    text = subprocess.run(
+        [ffmpeg_pfad(), "-hide_banner", "-i", str(pfad)], capture_output=True, text=True
+    ).stderr
+    roh = text.split("Duration:")[1].split(",")[0].strip()
+    stunden, minuten, sekunden = roh.split(":")
+    return int(stunden) * 3600 + int(minuten) * 60 + float(sekunden)
+
+
+@pytest.mark.skipif(ffmpeg_pfad() is None, reason="kein FFmpeg zum Testen vorhanden")
+@pytest.mark.parametrize("anzahl", [1, 9])
+def test_the_clip_is_exactly_as_long_as_its_pictures(tmp_path, anzahl):
+    """Der Klang bestimmt die Länge nicht – weder der kurze noch der lange Fall.
+
+    Bei einem Titel ist der Clip kürzer als der Chime, bei neun länger; ohne
+    festen Schnitt lief die aufgefüllte Stille danach minutenlang weiter.
+    """
+    spec = ClipSpec("MONDAY", "24.08.2026", "TUESDAY", "25.08.2026",
+                    [ClipItem("episode", "Serie", f"Folge {i}", 1, i, 2000, slot="20:15")
+                     for i in range(anzahl)])
+    ziel = tmp_path / f"ton{anzahl}.mp4"
+
+    transitions.render_clip(spec, ziel, height=360, ffmpeg=ffmpeg_pfad())
+
+    assert _dauer(ziel) == pytest.approx(transitions.clip_duration(anzahl), abs=0.15)
+
+
+@pytest.mark.skipif(ffmpeg_pfad() is None, reason="kein FFmpeg zum Testen vorhanden")
+def test_the_rollover_is_backed_by_the_chime(tmp_path):
+    """Der mitgelieferte Klang landet als Tonspur im Clip."""
+    spec = ClipSpec("MONDAY", "24.08.2026", "TUESDAY", "25.08.2026",
+                    [ClipItem("movie", "Film", "Film", year=1985, slot="20:15")])
+    mit_ton, ohne_ton = tmp_path / "mit.mp4", tmp_path / "ohne.mp4"
+
+    transitions.render_clip(spec, mit_ton, height=360, ffmpeg=ffmpeg_pfad())
+    transitions.render_clip(spec, ohne_ton, height=360, ffmpeg=ffmpeg_pfad(), sound="off")
+
+    beschreibung = subprocess.run(
+        [ffmpeg_pfad(), "-hide_banner", "-i", str(mit_ton)], capture_output=True, text=True
+    ).stderr
+    assert "Audio: aac" in beschreibung
+    # Stille lässt sich viel besser packen als der Chime.
+    assert mit_ton.stat().st_size > ohne_ton.stat().st_size
 
 
 def test_missing_ffmpeg_is_reported_clearly(tmp_path):

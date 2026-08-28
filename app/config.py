@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     transition_library: str = "Zeitreise-Übergänge"
     transition_max_clips: int = 7
     transition_height: int = 1080
+    #: Klang unter der Datumsrolle: leer = mitgelieferter Chime, "off" = stumm,
+    #: sonst ein Pfad auf eine eigene Datei.
+    transition_sound: str = ""
     #: Nur für dieses Profil werden Clips gerendert – leer = für alle. Das
     #: Rendern kostet Minuten, und gebraucht wird es praktisch nur beim
     #: Hauptprofil.

@@ -193,6 +193,7 @@ def build_clips(
                 ordner / name,
                 height=einstellungen.transition_height,
                 ffmpeg=einstellungen.ffmpeg_binary,
+                sound=einstellungen.transition_sound,
             )
         except transitions.RenderError as exc:
             log.error("Übergang für %s (%s) nicht erzeugt: %s", user_id, tag, exc)
