@@ -205,11 +205,18 @@ Seit v1.0 zeigt die Oberfläche den Grund selbst: statt eines nackten
 vollständige Aufrufstapel landet im Reiter **Protokoll**. Im Container-Log
 (`docker compose logs --tail=50`) steht er zusätzlich.
 
-Kommt der Fehler beim **Anlegen einer Sammlung**, lohnt ein Blick in die `.env`:
-Eine aus einer älteren Fassung übernommene Zeile
-`PTM_ALMANACH_PLAYLIST_NAME_TEMPLATE` kann Platzhalter enthalten, die es nicht
-mehr gibt. Seit v1.0 führt das nur noch zu einer Warnung im Protokoll – es gilt
-dann die Standardvorlage.
+Zwei Fälle, die beim **Anlegen einer Sammlung** auftraten und beide behoben
+sind – ein Update genügt:
+
+- `NOT NULL constraint failed: almanach.target_playlist_name`: Beim Umbau der
+  Almanachs sind Spalten in die Freigabe-Tabelle gewandert. In bestehenden
+  Datenbanken blieben die alten stehen und wiesen als Pflichtfelder jeden neuen
+  Datensatz ab. Beim Start werden solche Spalten jetzt entfernt – nachdem ihre
+  Werte übernommen wurden, die bestehende Plex-Playlist bleibt also erhalten.
+- Eine aus einer älteren Fassung übernommene Zeile
+  `PTM_ALMANACH_PLAYLIST_NAME_TEMPLATE` kann Platzhalter enthalten, die es nicht
+  mehr gibt. Das führt jetzt zu einer Warnung im Protokoll statt zu einem
+  Abbruch; es gilt dann die Standardvorlage.
 
 Ein bekannter Fall war `sqlite3.OperationalError: database is locked`: Während
 der Hintergrund-Sync schrieb, lief jeder gleichzeitige Klick nach fünf Sekunden
@@ -609,7 +616,9 @@ Tagesgruppierung, Staffelposter und echte FFmpeg-Rendervorgänge in 360p) sowie 
 HTTP-Endpunkte gegen ein Plex-Double ab – ein echter Plex-Server wird dafür
 nicht gebraucht.
 
-Bestehende Datenbanken werden beim Start automatisch um neue Spalten ergänzt;
+Bestehende Datenbanken werden beim Start automatisch um neue Spalten ergänzt
+und um alte Pflichtspalten erleichtert, die keine Entsprechung mehr haben und
+sonst neue Einträge blockieren würden (ihre Werte sind vorher übernommen);
 ein Update kostet also keine Blacklist- oder Logbuch-Einträge. Ein Almanach aus
 der Version vor den benannten Sammlungen wird dabei zu „Mein Almanach“ und
 behält seinen bisherigen Playlist-Namen; Sammlungen aus der Version vor den

@@ -269,6 +269,52 @@ def _add_missing_columns(engine) -> list[str]:
     return added
 
 
+def _drop_dead_columns(engine) -> list[str]:
+    """Übrig gebliebene Pflichtspalten aus älteren Fassungen entfernen.
+
+    Beim Umbau der Almanachs sind Spalten in die Freigabe-Tabelle gewandert.
+    In einer bestehenden Datenbank stehen sie weiter in ``almanach`` – und weil
+    sie NOT NULL ohne Vorgabe sind, weist SQLite jeden neuen Datensatz ab, der
+    sie nicht füllt: das Anlegen einer Sammlung endete in
+
+        NOT NULL constraint failed: almanach.target_playlist_name
+
+    Ihre Werte sind zu diesem Zeitpunkt längst übernommen (siehe
+    ``_migrate_almanach_shares``), deshalb dürfen sie weg. Angefasst werden nur
+    Spalten, die das Einfügen tatsächlich blockieren – alles andere bleibt
+    unberührt stehen.
+    """
+    inspector = inspect(engine)
+    existing = set(inspector.get_table_names())
+    entfernt: list[str] = []
+
+    for table in SQLModel.metadata.sorted_tables:
+        if table.name not in existing:
+            continue
+        bekannt = {column.name for column in table.columns}
+        for column in inspector.get_columns(table.name):
+            name = column["name"]
+            if name in bekannt or column.get("primary_key"):
+                continue
+            if column.get("nullable", True) or column.get("default") is not None:
+                continue  # stört nicht: darf leer bleiben oder hat eine Vorgabe
+            try:
+                with engine.begin() as connection:
+                    connection.execute(
+                        text(f'ALTER TABLE {table.name} DROP COLUMN "{name}"')
+                    )
+            except Exception as exc:  # pragma: no cover - alte SQLite-Fassung
+                log.warning(
+                    "Alte Pflichtspalte %s.%s ließ sich nicht entfernen (%s) – "
+                    "neue Einträge in dieser Tabelle schlagen weiter fehl.",
+                    table.name, name, exc,
+                )
+                continue
+            log.info("Alte Pflichtspalte %s.%s entfernt", table.name, name)
+            entfernt.append(f"{table.name}.{name}")
+    return entfernt
+
+
 def _migrate_legacy_almanach(engine) -> int:
     """Einträge aus der Zeit vor benannten Almanachs einsortieren.
 
@@ -380,6 +426,8 @@ def init_db() -> None:
     SQLModel.metadata.create_all(engine)
     _migrate_legacy_almanach(engine)
     _migrate_almanach_shares(engine)
+    # Erst nachdem die Werte übernommen sind, dürfen die alten Spalten weichen.
+    _drop_dead_columns(engine)
 
 
 def get_session() -> Iterator[Session]:

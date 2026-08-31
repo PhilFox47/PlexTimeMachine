@@ -193,3 +193,66 @@ def test_named_almanach_gains_a_share_row(tmp_path, monkeypatch):
 
     db.reset_engine()
     config.get_settings.cache_clear()
+
+
+def test_a_leftover_not_null_column_stops_blocking_new_rows(tmp_path, monkeypatch):
+    """Die alte Almanach-Tabelle hatte Spalten, die inzwischen woanders leben.
+
+    Sie blieben in bestehenden Datenbanken stehen, waren NOT NULL ohne Vorgabe
+    – und ließen damit jede neue Sammlung an
+
+        NOT NULL constraint failed: almanach.target_playlist_name
+
+    scheitern. Die Werte wandern in die Freigabe, danach müssen die Spalten weg.
+    """
+    pfad = tmp_path / "alt.db"
+    alt = sqlite3.connect(pfad)
+    alt.executescript(
+        """
+        CREATE TABLE almanach (
+            id INTEGER PRIMARY KEY,
+            plex_user_id VARCHAR NOT NULL,
+            name VARCHAR NOT NULL,
+            target_playlist_name VARCHAR NOT NULL,
+            created_at DATETIME NOT NULL,
+            last_synced_at DATETIME,
+            last_item_count INTEGER NOT NULL
+        );
+        INSERT INTO almanach
+            (plex_user_id, name, target_playlist_name, created_at, last_item_count)
+        VALUES ('Zeitreisende Ente', 'Star Wars', 'Star Wars – Almanach',
+                '2026-01-01 10:00:00', 7);
+        """
+    )
+    alt.commit()
+    alt.close()
+
+    monkeypatch.setenv("PTM_DATABASE_URL", f"sqlite:///{pfad}")
+    config.get_settings.cache_clear()
+    db.reset_engine()
+
+    db.init_db()
+
+    with Session(db.get_engine()) as session:
+        # Der Altbestand ist da und hat seine Playlist behalten.
+        sammlungen = db.list_almanachs(session, "Zeitreisende Ente")
+        assert [a.name for a in sammlungen] == ["Star Wars"]
+        freigabe = db.list_shares(session, sammlungen[0].id)[0]
+        assert freigabe.target_playlist_name == "Star Wars – Almanach"
+        assert freigabe.last_item_count == 7
+
+        # Und eine neue Sammlung lässt sich wieder anlegen.
+        neu = db.create_almanach(session, "Zeitreisende Ente", "Pen & Paper - Actual Play")
+        assert neu.id is not None
+
+    spalten = {
+        zeile[1]
+        for zeile in sqlite3.connect(pfad).execute("PRAGMA table_info(almanach)").fetchall()
+    }
+    assert "target_playlist_name" not in spalten      # blockierte das Einfügen
+    assert "last_item_count" not in spalten
+    assert "last_synced_at" in spalten                # darf leer bleiben, bleibt stehen
+
+    db.init_db()                                      # zweiter Start bleibt ruhig
+    db.reset_engine()
+    config.get_settings.cache_clear()
