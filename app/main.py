@@ -22,7 +22,13 @@ from fastapi import (
     Response,
     UploadFile,
 )
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session
@@ -300,6 +306,37 @@ def preview_response(request: Request, preview) -> HTMLResponse:
     return templates.TemplateResponse(
         request, "partials/preview.html", {"preview": preview}
     )
+
+
+@app.exception_handler(Exception)
+async def unhandled_error(request: Request, exc: Exception):
+    """Statt eines nackten „Internal Server Error" sagen, was los war.
+
+    Der Aufrufstapel geht ins Protokoll – dort steht er auch dann noch, wenn
+    niemand gerade in die Container-Ausgabe schaut.
+    """
+    log.exception("Unbehandelter Fehler bei %s %s", request.method, request.url.path)
+    try:
+        return templates.TemplateResponse(
+            request,
+            "error.html",
+            {
+                "fehler": f"{type(exc).__name__}: {exc}",
+                "methode": request.method,
+                "pfad": request.url.path,
+                "settings": get_settings(),
+                "version": __version__,
+                "users": [],
+                "current_user": "",
+                "state": None,
+            },
+            status_code=500,
+        )
+    except Exception:  # pragma: no cover - dann eben schmucklos
+        return PlainTextResponse(
+            f"{type(exc).__name__}: {exc}\n\nMehr steht im Protokoll unter /logs.",
+            status_code=500,
+        )
 
 
 # ---------------------------------------------------------------------------

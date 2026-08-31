@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+
+<section class="panel">
+  <h2>Da ist etwas schiefgegangen</h2>
+
+  <div class="notice error">{{ fehler }}</div>
+
+  <p class="cell-sub">
+    Aufruf: <code>{{ methode }} {{ pfad }}</code>
+  </p>
+
+  <p class="cell-sub">
+    Die vollständige Meldung samt Aufrufstapel steht im
+    <a href="/logs">Protokoll</a>. Beim Melden des Fehlers hilft die dortige
+    Zeile am meisten.
+  </p>
+
+  <p><a class="btn" href="/">Zurück ins Cockpit</a></p>
+</section>
+
+{% endblock %}

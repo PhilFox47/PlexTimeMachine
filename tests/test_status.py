@@ -250,3 +250,57 @@ def test_the_footer_says_whether_a_webhook_ever_arrived(client):
 
     seite = client.get("/").text
     assert "Webhook: Tautulli" in seite
+
+
+# ---------------------------------------------------------------------------
+# Fehler sichtbar machen
+# ---------------------------------------------------------------------------
+
+
+def test_an_unexpected_error_names_its_cause(client, monkeypatch):
+    """Statt eines nackten „Internal Server Error" den Grund zeigen."""
+    from fastapi.testclient import TestClient
+
+    from app import db as db_modul
+    from app.main import app
+
+    def kaputt(*a, **k):
+        raise RuntimeError("etwas ging schief")
+
+    monkeypatch.setattr(db_modul, "create_almanach", kaputt)
+    logbuffer.clear()
+
+    with TestClient(app, raise_server_exceptions=False) as roh:
+        antwort = roh.post("/almanach/new", data={"name": "Testsammlung"})
+
+    assert antwort.status_code == 500
+    assert "RuntimeError: etwas ging schief" in antwort.text
+    assert "/logs" in antwort.text                       # Verweis aufs Protokoll
+    # Und der Aufrufstapel steht im Protokoll, nicht nur in der Container-Ausgabe.
+    meldungen = [z.message for z in logbuffer.lines(problems_only=True)]
+    assert any("Unbehandelter Fehler bei POST /almanach/new" in m for m in meldungen)
+    assert any("RuntimeError: etwas ging schief" in m for m in meldungen)
+
+
+def test_a_broken_name_template_does_not_break_creating_a_collection(client, session,
+                                                                     monkeypatch):
+    """Eine alte Zeile in der .env darf das Anlegen nicht umwerfen.
+
+    Genau dort konnte ein Platzhalter stehen, den es nicht mehr gibt – das
+    endete beim Anlegen einer Sammlung in einem Serverfehler.
+    """
+    from app import config
+
+    monkeypatch.setenv("PTM_ALMANACH_PLAYLIST_NAME_TEMPLATE", "{name} – {gibtsnicht}")
+    config.get_settings.cache_clear()
+    try:
+        antwort = client.post("/almanach/new", data={"name": "Pen & Paper - Actual Play"},
+                              follow_redirects=False)
+    finally:
+        config.get_settings.cache_clear()
+
+    assert antwort.status_code == 303
+    sammlungen = db.list_almanachs(session, "Alex")
+    assert [a.name for a in sammlungen] == ["Pen & Paper - Actual Play"]
+    freigabe = db.list_shares(session, sammlungen[0].id)[0]
+    assert freigabe.target_playlist_name == "Pen & Paper - Actual Play – Alex – Almanach"

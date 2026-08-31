@@ -198,10 +198,18 @@ Zuerst ins Log schauen: `docker compose logs --tail=50`.
   Fehlerzeile nennt den Grund; der häufigste ist ein Datenverzeichnis, in das
   der Container nicht schreiben darf – dann hilft `sudo chown -R 1000:1000 ./data`.
 
-### Wenn eine Aktion mit "Internal Server Error" endet
+### Wenn eine Aktion mit einem Fehler endet
 
-Der genaue Grund steht immer im Log (`docker compose logs --tail=50`), meist
-als `Traceback` direkt nach der fehlgeschlagenen Anfrage.
+Seit v1.0 zeigt die Oberfläche den Grund selbst: statt eines nackten
+„Internal Server Error" erscheint eine Seite mit Fehlerart und -meldung, und der
+vollständige Aufrufstapel landet im Reiter **Protokoll**. Im Container-Log
+(`docker compose logs --tail=50`) steht er zusätzlich.
+
+Kommt der Fehler beim **Anlegen einer Sammlung**, lohnt ein Blick in die `.env`:
+Eine aus einer älteren Fassung übernommene Zeile
+`PTM_ALMANACH_PLAYLIST_NAME_TEMPLATE` kann Platzhalter enthalten, die es nicht
+mehr gibt. Seit v1.0 führt das nur noch zu einer Warnung im Protokoll – es gilt
+dann die Standardvorlage.
 
 Ein bekannter Fall war `sqlite3.OperationalError: database is locked`: Während
 der Hintergrund-Sync schrieb, lief jeder gleichzeitige Klick nach fünf Sekunden

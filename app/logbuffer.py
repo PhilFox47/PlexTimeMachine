@@ -43,6 +43,22 @@ class LogLine:
         return self.logger
 
 
+#: So lang darf eine Zeile im Puffer werden.
+MAX_LENGTH = 1400
+
+
+def _kuerzen(text: str) -> str:
+    """Lange Meldungen stutzen, ohne den Schluss zu verlieren.
+
+    Bei einem Aufrufstapel steht die eigentliche Fehlermeldung ganz unten –
+    vorne abzuschneiden würde also genau das wegwerfen, worauf es ankommt.
+    """
+    if len(text) <= MAX_LENGTH:
+        return text
+    kopf, schwanz = 300, MAX_LENGTH - 300
+    return f"{text[:kopf]}\n … [gekürzt] … \n{text[-schwanz:]}"
+
+
 class RingHandler(logging.Handler):
     """Handler, der die letzten Zeilen aufbewahrt statt sie wegzuschreiben."""
 
@@ -62,7 +78,7 @@ class RingHandler(logging.Handler):
                 at=datetime.fromtimestamp(record.created, tz=timezone.utc),
                 level=record.levelname,
                 logger=record.name,
-                message=text[:1000],
+                message=_kuerzen(text),
             )
         )
 

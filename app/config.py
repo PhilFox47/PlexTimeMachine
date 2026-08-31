@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from datetime import date
+import logging
 from functools import lru_cache
 from typing import Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.formatting import weekday_long
+
+
+log = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -73,6 +77,23 @@ class Settings(BaseSettings):
         """True, sobald ein Token hinterlegt ist – sonst läuft die UI im Demo-Modus."""
         return bool(self.plex_token and self.plex_baseurl)
 
+    @staticmethod
+    def _fill(template: str, ersatz: str, **werte: str) -> str:
+        """Vorlage füllen – eine unbrauchbare Vorlage darf nichts umwerfen.
+
+        Eine aus einer älteren Fassung übernommene Zeile in der ``.env`` kann
+        Platzhalter enthalten, die es nicht mehr gibt. Das ist ein Grund für
+        eine Warnung, nicht für einen Serverfehler mitten im Anlegen.
+        """
+        try:
+            return template.format(**werte)
+        except (KeyError, IndexError, ValueError) as exc:
+            log.warning(
+                "Namensvorlage »%s« ist unbrauchbar (%s) – es gilt »%s«",
+                template, exc, ersatz,
+            )
+            return ersatz.format(**werte)
+
     def playlist_name_for(self, user: str, first_date: Optional[date] = None) -> str:
         """Name der Zeitreise-Playlist.
 
@@ -80,7 +101,9 @@ class Settings(BaseSettings):
         Playlist – daraus ergeben sich ``{weekday}`` und ``{date}``. Der Name
         wandert damit mit, sobald der früheste Titel weggesehen ist.
         """
-        return self.playlist_name_template.format(
+        return self._fill(
+            self.playlist_name_template,
+            "{weekday} - {date} - Time Machine",
             user=user,
             weekday=weekday_long(first_date),
             date=first_date.strftime("%d.%m.%Y") if first_date else "",
@@ -96,7 +119,7 @@ class Settings(BaseSettings):
         template = self.almanach_playlist_name_template
         if "{name}" not in template:
             template = f"{{name}} – {template}"
-        return template.format(user=user, name=name)
+        return self._fill(template, "{name} – {user} – Almanach", user=user, name=name)
 
 
 @lru_cache
